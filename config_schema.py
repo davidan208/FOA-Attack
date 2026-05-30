@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from hydra.core.config_store import ConfigStore
 
@@ -39,6 +39,8 @@ class OptimConfig:
     alpha: float = 1.0
     epsilon: int = 8
     steps: int = 300
+    use_mca: bool = True
+    num_crops: int = 5
 
 
 @dataclass
@@ -51,11 +53,8 @@ class ModelConfig:
     crop_scale: tuple = (0.5, 0.9)
     ensemble: bool = True
     device: str = "cuda:0"  # Can be "cpu", "cuda:0", "cuda:1", etc.
-    backbone: list = (
-        "L336",
-        "B16",
-        "B32",
-        "Laion",
+    backbone: list = field(
+        default_factory=lambda: ["L336", "B16", "B32", "Laion"]
     )  # List of models to use: L336, B16, B32, Laion
 
 
@@ -63,11 +62,11 @@ class ModelConfig:
 class MainConfig:
     """Main configuration combining all sub-configs"""
 
-    data: DataConfig = DataConfig()
-    optim: OptimConfig = OptimConfig()
-    model: ModelConfig = ModelConfig()
-    wandb: WandbConfig = WandbConfig()
-    blackbox: BlackboxConfig = BlackboxConfig()
+    data: DataConfig = field(default_factory=DataConfig)
+    optim: OptimConfig = field(default_factory=OptimConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    wandb: WandbConfig = field(default_factory=WandbConfig)
+    blackbox: BlackboxConfig = field(default_factory=BlackboxConfig)
     attack: str = "fgsm"  # can be [fgsm, mifgsm, pgd]
 
 
@@ -76,9 +75,11 @@ class MainConfig:
 class Ensemble3ModelsConfig(MainConfig):
     """Configuration for ensemble_3models.py"""
 
-    data: DataConfig = DataConfig(batch_size=1)
-    model: ModelConfig = ModelConfig(
-        use_source_crop=True, use_target_crop=True, backbone=["B16", "B32", "Laion"]
+    data: DataConfig = field(default_factory=lambda: DataConfig(batch_size=1))
+    model: ModelConfig = field(
+        default_factory=lambda: ModelConfig(
+            use_source_crop=True, use_target_crop=True, backbone=["B16", "B32", "Laion"]
+        )
     )
 
 

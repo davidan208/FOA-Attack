@@ -5,15 +5,17 @@ defaults:
 
 data:
   batch_size: 1
-  num_samples: 100
-  output: "./foa_attack_output"
+  num_samples: 1000
+  output: "./sot_attack_output"
   cle_data_path: "resources/images/bigscale"
   tgt_data_path: "resources/images/target_images"
 
 optim:
   alpha: 1.0
   epsilon: 16
-  steps: 300 # 300
+  steps: 100 # 300
+  use_mca: true
+  num_crops: 5
 
 model:
   input_res: 224
