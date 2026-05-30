@@ -26,7 +26,7 @@ cffi==1.17.1
 cfgv==3.4.0
 charset-normalizer==3.4.1
 click==8.1.8
-clip @ git+https://github.com/openai/CLIP.git@dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1
+clip @ git+https://github.com/openai/CLIP.git
 cloudpathlib==0.20.0
 comm==0.2.2
 confection==0.1.5
