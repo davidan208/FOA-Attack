@@ -62,13 +62,18 @@ class SOTLossFunction(nn.Module):
         for model in self.extractors:
             # Extract features from current target image
             x_tensor, x_embedding = model.global_local_features(x.to(x.device))
-            x_embedding = x_embedding.squeeze(0)
-            
-            # Resolve local prototypes using K-Means clustering
-            cluster_center = self.get_cluster_center(x_embedding, x.device).unsqueeze(0)
-            
-            self.ground_truth_global.append(x_tensor)
-            self.ground_truth_local.append(cluster_center)
+            # x_tensor: [B, dim], x_embedding: [B, num_patches, dim]
+            batch_size = x_embedding.shape[0]
+
+            # Resolve local prototypes using K-Means clustering, per sample
+            centers = [
+                self.get_cluster_center(x_embedding[b], x.device)
+                for b in range(batch_size)
+            ]
+            cluster_center = torch.stack(centers, dim=0)  # [B, cluster, dim]
+
+            self.ground_truth_global.append(x_tensor)      # [B, dim]
+            self.ground_truth_local.append(cluster_center) # [B, cluster, dim]
 
     def get_cluster_center(self, embedding_img: torch.Tensor, device: torch.device) -> torch.Tensor:
         """
@@ -152,15 +157,21 @@ class SOTLossFunction(nn.Module):
         loss_list = []
         
         for index, model in enumerate(self.extractors):
-            gt_global = self.ground_truth_global[index]
-            gt_local = self.ground_truth_local[index].squeeze(0)
+            gt_global = self.ground_truth_global[index]   # [B, dim]
+            gt_local = self.ground_truth_local[index]      # [B, cluster, dim]
             
-            feat_global = feature_dict[index].unsqueeze(0)
-            feat_local = feature_local_dict[index].squeeze(0)
+            feat_global = feature_dict[index]              # [B, dim]
+            feat_local = feature_local_dict[index]         # [B, cluster, dim]
             
-            # Compute standard OT loss (un-cropped or base image)
-            global_alignment = self.OT(gt_global, feat_global)
-            local_alignment = self.OT(gt_local, feat_local)
+            batch_size = gt_global.shape[0]
+            global_alignment = 0
+            local_alignment = 0
+            for b in range(batch_size):
+                # Compute standard OT loss (un-cropped or base image), per sample
+                global_alignment = global_alignment + self.OT(gt_global[b:b + 1], feat_global[b:b + 1])
+                local_alignment = local_alignment + self.OT(gt_local[b], feat_local[b])
+            global_alignment = global_alignment / batch_size
+            local_alignment = local_alignment / batch_size
             
             # Combine global and local components
             model_loss = global_alignment + 0.2 * local_alignment
@@ -193,14 +204,20 @@ class SOTLossFunction(nn.Module):
             for index, model in enumerate(self.extractors):
                 crop_losses = []
                 for crop_feat_dict, crop_feat_local_dict in crop_features:
-                    c_global = crop_feat_dict[index].unsqueeze(0)
-                    c_local = crop_feat_local_dict[index].squeeze(0)
+                    c_global = crop_feat_dict[index]         # [B, dim]
+                    c_local = crop_feat_local_dict[index]    # [B, cluster, dim]
                     
-                    gt_global = self.ground_truth_global[index]
-                    gt_local = self.ground_truth_local[index].squeeze(0)
+                    gt_global = self.ground_truth_global[index]  # [B, dim]
+                    gt_local = self.ground_truth_local[index]     # [B, cluster, dim]
                     
-                    g_align = self.OT(gt_global, c_global)
-                    l_align = self.OT(gt_local, c_local)
+                    batch_size = gt_global.shape[0]
+                    g_align = 0
+                    l_align = 0
+                    for b in range(batch_size):
+                        g_align = g_align + self.OT(gt_global[b:b + 1], c_global[b:b + 1])
+                        l_align = l_align + self.OT(gt_local[b], c_local[b])
+                    g_align = g_align / batch_size
+                    l_align = l_align / batch_size
                     crop_losses.append(g_align + 0.2 * l_align)
                 mca_loss_list.append(torch.stack(crop_losses).mean())
         else:
