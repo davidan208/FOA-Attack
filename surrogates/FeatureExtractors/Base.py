@@ -54,20 +54,23 @@ class EnsembleFeatureExtractor_ot(BaseFeatureExtractor):
         self.cluster_number = cluster_number
 
     def forward(self, x: Tensor) -> Tensor:
-        # features = []
-        # for model in self.extractors:
-        #     features.append(model(x).squeeze())
-        # features = torch.cat(features, dim=0)
+        # 支持 batch_size >= 1。
+        # features[i]      : [B, dim]            全局特征（保留 batch 维度）
+        # features_local[i]: [B, cluster, dim]   每个样本各自的聚类中心
         features = {}  # 不拼接，改为字典存储
         features_local = {}
         for i, model in enumerate(self.extractors):
-            # features[i] = model(x).squeeze()
             x_tensor, x_embedding = model.global_local_features(x.to(x.device))
-            features[i] = x_tensor.squeeze()
-            cluster_center = self.get_cluster_center(x_embedding[0],x.device).unsqueeze(0)
-            features_local[i]=cluster_center
+            # x_tensor: [B, dim], x_embedding: [B, num_patches, dim]
+            features[i] = x_tensor
+            batch_size = x_embedding.shape[0]
+            centers = [
+                self.get_cluster_center(x_embedding[b], x.device)
+                for b in range(batch_size)
+            ]
+            features_local[i] = torch.stack(centers, dim=0)  # [B, cluster, dim]
 
-        return features,features_local
+        return features, features_local
 
     def get_cluster_center(self, embedding_img,device):
         # self.setup_seed(20)
@@ -373,25 +376,35 @@ class EnsembleFeatureLoss_OT_foa_attack(nn.Module):
         self.ground_truth_local.clear()
         for model in self.extractors:
             x_tensor, x_embedding = model.global_local_features(x.to(x.device))
-            x_embedding = x_embedding.squeeze(0)
-            cluster_center = self.get_cluster_center(x_embedding,x.device).unsqueeze(0)
-            self.ground_truth.append(x_tensor)
-            self.ground_truth_local.append(cluster_center)
+            # x_tensor: [B, dim], x_embedding: [B, num_patches, dim]
+            batch_size = x_embedding.shape[0]
+            centers = [
+                self.get_cluster_center(x_embedding[b], x.device)
+                for b in range(batch_size)
+            ]
+            cluster_center = torch.stack(centers, dim=0)  # [B, cluster, dim]
+            self.ground_truth.append(x_tensor)             # [B, dim]
+            self.ground_truth_local.append(cluster_center) # [B, cluster, dim]
 
     def __call__(self, feature_dict: Dict[int, Tensor],feature_local_dict: Dict[int, Tensor], y: Any = None) -> Tensor:
         loss_list = []
         loss_local_list = []
         for index, model in enumerate(self.extractors):
-            gt_local = self.ground_truth_local[index].squeeze(0)
-            gt = self.ground_truth[index]
-            feature = feature_dict[index].unsqueeze(0)
-            feature_local = feature_local_dict[index].squeeze(0)
-            # print("gt_local",gt_local.shape)
-            # print("feature_local", feature_local.shape)
-            local_loss = self.OT(gt_local, feature_local)
-            
-            # feat_loss = torch.mean(torch.sum(feature * gt, dim=1))
-            feat_loss = self.OT(gt,feature)
+            gt = self.ground_truth[index]                 # [B, dim]
+            gt_local = self.ground_truth_local[index]      # [B, cluster, dim]
+            feature = feature_dict[index]                  # [B, dim]
+            feature_local = feature_local_dict[index]      # [B, cluster, dim]
+
+            batch_size = gt.shape[0]
+            feat_loss = 0
+            local_loss = 0
+            for b in range(batch_size):
+                # 全局 OT：每个样本单独计算（[1, dim] vs [1, dim]）
+                feat_loss = feat_loss + self.OT(gt[b:b + 1], feature[b:b + 1])
+                # 局部 OT：每个样本的聚类中心单独计算（[cluster, dim] vs [cluster, dim]）
+                local_loss = local_loss + self.OT(gt_local[b], feature_local[b])
+            feat_loss = feat_loss / batch_size
+            local_loss = local_loss / batch_size
 
             loss_list.append(feat_loss)
             loss_local_list.append(local_loss)
