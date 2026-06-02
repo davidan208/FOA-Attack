@@ -562,7 +562,7 @@ def resolve_device(device_str: str) -> str:
     return "cpu"
 
 
-@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models")
+@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models_100")
 def main(cfg: MainConfig):
     print("=" * 60)
     print("SOTAttack: Starting Adversarial Example Generation Stage")
