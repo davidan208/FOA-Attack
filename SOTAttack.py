@@ -224,9 +224,6 @@ class SOTLossFunction(nn.Module):
             mca_loss_list = loss_list  # Fallback to standard loss if MCA is not run
             
         # Dynamically balance OT vs MCA loss for each model
-        # Lambda_i represents the weight for standard OT loss.
-        # Lambda_i is close to 1.0 if the encoder is struggling (ratio >= 1.0)
-        # Lambda_i decreases towards 0.0 if the encoder is nicely optimized (ratio -> 0.0)
         combined_losses = []
         for i in range(len(self.extractors)):
             lambda_i = min(ratios[i], 1.0)
@@ -244,24 +241,38 @@ class SOTLossFunction(nn.Module):
 # =====================================================================
 
 
+def _numeric_sort_key(filename: str) -> int:
+    """
+    Extract numeric index from filename for proper numeric sorting.
+    E.g., '123.png' -> 123, 'img_5.jpg' -> 5
+    Falls back to 0 if no number is found.
+    """
+    import re
+    name_noext = os.path.splitext(filename)[0]
+    numbers = re.findall(r'\d+', name_noext)
+    if numbers:
+        return int(numbers[-1])
+    return 0
+
+
 class RobustImageDataset(torch.utils.data.Dataset):
     """
     A robust image dataset that handles both:
-      1. Flat directory layout: images directly in the root folder (e.g. 'path/to/images/*.png')
-      2. Class-based subdirectory layout: images nested inside subfolders (e.g. 'path/to/images/class1/*.png')
+      1. Flat directory layout: images directly in the root folder
+      2. Class-based subdirectory layout: images nested inside subfolders
+    
+    Images are ALWAYS sorted numerically by index (0, 1, 2, 3, ... not 0, 1, 10, 100, ...).
     """
     def __init__(self, root_dir: str, transform: Any = None):
         self.root_dir = root_dir
         self.transform = transform
         self.samples = []
         
-        # Valid image extensions
-        valid_extensions = {".png", ".jpg", ".jpeg", ".JPEG", ".png", ".bmp", ".webp"}
+        valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
         
         if not os.path.exists(root_dir):
             raise FileNotFoundError(f"Directory not found: {root_dir}")
             
-        # Get list of immediate subdirectories
         subdirs = [
             os.path.join(root_dir, d) 
             for d in os.listdir(root_dir) 
@@ -269,22 +280,31 @@ class RobustImageDataset(torch.utils.data.Dataset):
         ]
         
         if len(subdirs) > 0:
-            # Subdirectory layout (e.g., class subfolders exist)
-            print(f"  [RobustDataset] Found {len(subdirs)} subdirectories in '{root_dir}'. Loading nested images.")
-            for class_idx, subdir in enumerate(sorted(subdirs)):
+            subdirs_sorted = sorted(subdirs, key=lambda x: _numeric_sort_key(os.path.basename(x)))
+            print(f"  [RobustDataset] Found {len(subdirs_sorted)} subdirectories in '{root_dir}'. Loading nested images (numeric order).")
+            for class_idx, subdir in enumerate(subdirs_sorted):
+                all_files = []
                 for root, _, files in os.walk(subdir):
-                    for file in sorted(files):
+                    for file in files:
                         if os.path.splitext(file)[1].lower() in valid_extensions:
-                            self.samples.append((os.path.join(root, file), class_idx))
+                            all_files.append(os.path.join(root, file))
+                all_files.sort(key=lambda x: _numeric_sort_key(os.path.basename(x)))
+                for filepath in all_files:
+                    self.samples.append((filepath, class_idx))
         else:
-            # Flat layout (images directly in the root directory)
-            print(f"  [RobustDataset] No subdirectories found in '{root_dir}'. Loading images directly.")
-            for file in sorted(os.listdir(root_dir)):
+            print(f"  [RobustDataset] No subdirectories found in '{root_dir}'. Loading images directly (numeric order).")
+            all_files = []
+            for file in os.listdir(root_dir):
                 if os.path.splitext(file)[1].lower() in valid_extensions:
-                    self.samples.append((os.path.join(root_dir, file), 0))
+                    all_files.append(file)
+            all_files.sort(key=_numeric_sort_key)
+            for file in all_files:
+                self.samples.append((os.path.join(root_dir, file), 0))
                     
         if len(self.samples) == 0:
             raise RuntimeError(f"No valid image files found in path: {root_dir}")
+        
+        print(f"  [RobustDataset] Loaded {len(self.samples)} images. First: {os.path.basename(self.samples[0][0])}, Last: {os.path.basename(self.samples[-1][0])}")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -338,27 +358,17 @@ def get_surrogate_models(cfg: MainConfig, cluster_number: int) -> Tuple[torch.nn
     else:
         ensemble_extractor = models[0]
 
-    # Instantiate custom loss function section directly
     ensemble_loss = SOTLossFunction(models, cluster_number=cluster_number)
     
     return ensemble_extractor, models, ensemble_loss
 
 
 def log_metrics(pbar, metrics: Dict[str, float], img_index: int, epoch: Optional[int] = None):
-    """
-    Log metrics to the progress bar and wandb.
-    """
+    """Log metrics to the progress bar."""
     pbar_metrics = {
         k: f"{v:.5f}" if "loss" in k else f"{v:.3f}" for k, v in metrics.items()
     }
     pbar.set_postfix(pbar_metrics)
-
-    # Log to wandb if active
-    if wandb.run is not None:
-        wandb_metrics = {f"img{img_index}_{k}": v for k, v in metrics.items()}
-        if epoch is not None:
-            wandb_metrics["epoch"] = epoch
-        wandb.log(wandb_metrics)
 
 
 def get_similarity_loss(
@@ -371,7 +381,6 @@ def get_similarity_loss(
     """
     Computes similarity loss dynamically, supporting both standard OT loss and Multi-Crop Alignment (MCA).
     """
-    # 1. Extract standard base features (with crop if use_source_crop is active)
     if source_crop is not None and cfg.model.use_source_crop:
         base_image = source_crop(image)
     else:
@@ -379,7 +388,6 @@ def get_similarity_loss(
         
     outputs = ensemble_extractor(base_image)
     
-    # 2. Extract multi-crop features for MCA
     crop_features = []
     if cfg.optim.use_mca and cfg.optim.num_crops > 0 and source_crop is not None:
         for _ in range(cfg.optim.num_crops):
@@ -410,11 +418,9 @@ def fgsm_attack(
     image_org: torch.Tensor,
     image_tgt: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Perform FGSM attack to generate adversarial perturbations.
-    """
+    """Perform FGSM attack to generate adversarial perturbations."""
     delta = torch.zeros_like(image_org, requires_grad=True)
-    pbar = tqdm(range(cfg.optim.steps), desc="FGSM Attack Progress")
+    pbar = tqdm(range(cfg.optim.steps), desc=f"FGSM [idx={img_index}]")
 
     for epoch in pbar:
         with torch.no_grad():
@@ -432,7 +438,6 @@ def fgsm_attack(
 
         grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
 
-        # Update perturbation (gradient ascent to maximize feature similarity)
         delta.data = torch.clamp(
             delta + cfg.optim.alpha * torch.sign(grad),
             min=-cfg.optim.epsilon,
@@ -453,12 +458,10 @@ def mifgsm_attack(
     image_org: torch.Tensor,
     image_tgt: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Perform MI-FGSM attack with momentum.
-    """
+    """Perform MI-FGSM attack with momentum."""
     delta = torch.zeros_like(image_org, requires_grad=True)
     momentum = torch.zeros_like(image_org, requires_grad=False)
-    pbar = tqdm(range(cfg.optim.steps), desc="MI-FGSM Attack Progress")
+    pbar = tqdm(range(cfg.optim.steps), desc=f"MI-FGSM [idx={img_index}]")
 
     for epoch in pbar:
         with torch.no_grad():
@@ -476,7 +479,6 @@ def mifgsm_attack(
 
         grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
 
-        # Update momentum and perturbation (gradient ascent to maximize similarity)
         momentum = momentum * 0.9 + grad
         delta.data = torch.clamp(
             delta + cfg.optim.alpha * torch.sign(momentum),
@@ -498,12 +500,10 @@ def pgd_attack(
     image_org: torch.Tensor,
     image_tgt: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Perform PGD attack using Adam optimizer.
-    """
+    """Perform PGD attack using Adam optimizer."""
     delta = torch.zeros_like(image_org, requires_grad=True)
     optimizer = torch.optim.Adam([delta], lr=cfg.optim.alpha)
-    pbar = tqdm(range(cfg.optim.steps), desc="PGD Attack Progress")
+    pbar = tqdm(range(cfg.optim.steps), desc=f"PGD [idx={img_index}]")
 
     for epoch in pbar:
         with torch.no_grad():
@@ -512,7 +512,6 @@ def pgd_attack(
         adv_image = image_org + delta
         similarity = get_similarity_loss(cfg, ensemble_extractor, ensemble_loss, adv_image, source_crop if cfg.model.use_source_crop else None)
         
-        # Minimize negative similarity (maximizing positive alignment)
         loss = -similarity
 
         metrics = {
@@ -526,7 +525,6 @@ def pgd_attack(
         loss.backward()
         optimizer.step()
 
-        # Project perturbation to L-infinity epsilon ball
         delta.data = torch.clamp(
             delta,
             min=-cfg.optim.epsilon,
@@ -540,7 +538,6 @@ def pgd_attack(
 def resolve_device(device_str: str) -> str:
     """
     Checks if the requested device is available. Falls back to CPU if CUDA is not available.
-    Also handles out-of-index CUDA device requests.
     """
     if "cuda" in device_str:
         if torch.cuda.is_available():
@@ -551,15 +548,37 @@ def resolve_device(device_str: str) -> str:
                     if idx < torch.cuda.device_count():
                         return device_str
                     else:
-                        print(f"  [Device] Requested device '{device_str}' is out of range ({torch.cuda.device_count()} GPUs available). Falling back to 'cuda:0'.")
+                        print(f"  [Device] Requested '{device_str}' out of range ({torch.cuda.device_count()} GPUs). Falling back to 'cuda:0'.")
                         return "cuda:0"
                 return device_str
             except ValueError:
                 return "cuda:0"
         else:
-            print("  [Device] CUDA is not available on this system. Falling back to 'cpu'.")
+            print("  [Device] CUDA not available. Falling back to 'cpu'.")
             return "cpu"
     return "cpu"
+
+
+def get_completed_indices(output_dir: str) -> set:
+    """
+    Scan output directory to find already-generated adversarial images.
+    Returns a set of integer indices that have been completed.
+    """
+    completed = set()
+    import re
+    
+    if not os.path.exists(output_dir):
+        return completed
+    
+    for root, _, files in os.walk(output_dir):
+        for file in files:
+            if file.lower().endswith('.png'):
+                name_noext = os.path.splitext(file)[0]
+                numbers = re.findall(r'\d+', name_noext)
+                if numbers:
+                    completed.add(int(numbers[-1]))
+    
+    return completed
 
 
 @hydra.main(version_base=None, config_path="config", config_name="ensemble_3models_100")
@@ -568,21 +587,14 @@ def main(cfg: MainConfig):
     print("SOTAttack: Starting Adversarial Example Generation Stage")
     print("=" * 60)
     
-    # 0. Resolve execution device automatically (CUDA fallback to CPU if unavailable)
+    # 0. Resolve device
     device = resolve_device(cfg.model.device)
     OmegaConf.update(cfg, "model.device", device)
     print(f"Active computation device: {device}")
     
-    # Initialize wandb if config specifies it
-    setup_wandb(cfg, tags=["sot_attack"])
-    if wandb.run is not None:
-        wandb.define_metric("epoch")
-        wandb.define_metric("*", step_metric="epoch")
-
     # 1. Resolve absolute paths
     cle_data_path = hydra.utils.to_absolute_path(cfg.data.cle_data_path)
     tgt_data_path = hydra.utils.to_absolute_path(cfg.data.tgt_data_path)
-
     output_dir = hydra.utils.to_absolute_path(cfg.data.output)
     
     # 2. Setup transforms
@@ -593,20 +605,13 @@ def main(cfg: MainConfig):
         transforms.Lambda(lambda img: to_tensor(img)),
     ])
     
-    # 3. Load datasets robustly
+    # 3. Load datasets (numeric order: 0, 1, 2, 3, ...)
     print("\nInitializing datasets...")
     clean_dataset = RobustImageDataset(cle_data_path, transform=transform_fn)
     target_dataset = RobustImageDataset(tgt_data_path, transform=transform_fn)
     
-    clean_loader = torch.utils.data.DataLoader(
-        clean_dataset, batch_size=cfg.data.batch_size, shuffle=False
-    )
-    target_loader = torch.utils.data.DataLoader(
-        target_dataset, batch_size=cfg.data.batch_size, shuffle=False
-    )
-    
     # 4. Load surrogate models
-    cluster_num = 10  # Standard cluster centers count for generation
+    cluster_num = 10
     print(f"\nInitializing surrogate feature extractors (cluster_number={cluster_num})...")
     try:
         ensemble_extractor, models, ensemble_loss = get_surrogate_models(cfg, cluster_num)
@@ -627,10 +632,10 @@ def main(cfg: MainConfig):
         else torch.nn.Identity()
     )
 
-    # Get configuration hash for clean saving subdirectory
+    # Get configuration hash for output subdirectory
     config_hash = hash_training_config(cfg)
     
-    # 6. Resolve attack optimization function
+    # 6. Resolve attack function
     attack_fn_map = {
         "fgsm": fgsm_attack,
         "mifgsm": mifgsm_attack,
@@ -640,50 +645,98 @@ def main(cfg: MainConfig):
     attack_fn = attack_fn_map.get(attack_type, pgd_attack)
     print(f"\nUsing attack method: {attack_type.upper()}")
 
-    # 7. Start optimization generation loop
-    count = 0
-    for i, ((image_org, _, path_org), (image_tgt, _, path_tgt)) in enumerate(zip(clean_loader, target_loader)):
-        if cfg.data.batch_size * (i + 1) > cfg.data.num_samples:
-            break
-            
-        print(f"\nGenerating Adversarial Sample {i+1}/{cfg.data.num_samples//cfg.data.batch_size}")
-        
-        # Shift inputs to configured device
-        image_org = image_org.to(cfg.model.device)
-        image_tgt = image_tgt.to(cfg.model.device)
-        
-        # Run selected optimizer attack function
-        adv_images = attack_fn(
-            cfg=cfg,
-            ensemble_extractor=ensemble_extractor,
-            ensemble_loss=ensemble_loss,
-            source_crop=source_crop,
-            target_crop=target_crop,
-            img_index=i,
-            image_org=image_org,
-            image_tgt=image_tgt,
-        )
+    # 7. RESUME: Scan output directory for already-completed images
+    save_base_dir = os.path.join(output_dir, "img", config_hash)
+    completed_indices = get_completed_indices(save_base_dir)
+    
+    if len(completed_indices) > 0:
+        print(f"\n{'='*60}")
+        print(f"  RESUME MODE: Found {len(completed_indices)} already-generated images.")
+        print(f"  Completed indices: {sorted(completed_indices)[:10]}{'...' if len(completed_indices) > 10 else ''}")
+        print(f"  Will skip these and continue from where we left off.")
+        print(f"{'='*60}")
+    else:
+        print(f"\n  No previous results found in '{save_base_dir}'. Starting from index 0.")
 
-        # Save generated adversarial images robustly
-        for path_idx in range(len(path_org)):
-            src_path = path_org[path_idx]
-            folder = os.path.basename(os.path.dirname(src_path))
-            name = os.path.basename(src_path)
-            
-            folder_to_save = os.path.join(output_dir, "img", config_hash, folder)
-            ensure_dir(folder_to_save)
-            
-            # Save format mapping
-            name_noext = os.path.splitext(name)[0]
-            save_path = os.path.join(folder_to_save, name_noext + ".png")
-            torchvision.utils.save_image(adv_images[path_idx], save_path)
-            print(f"Saved adversarial image: {folder}/{name_noext}.png")
-            count += 1
-            
-    if wandb.run is not None:
-        wandb.finish()
+    # 8. Sequential processing loop: index 0, 1, 2, 3, ...
+    num_samples = min(cfg.data.num_samples, len(clean_dataset), len(target_dataset))
+    count_generated = 0
+    count_skipped = 0
+    
+    print(f"\n  Total images to process: {num_samples}")
+    print(f"  Processing order: sequential by index (0, 1, 2, 3, ...)")
+    print(f"  Batch size: {cfg.data.batch_size}")
+    print("")
+    
+    batch_indices = []
+    
+    for img_index in range(num_samples):
+        # RESUME: skip already completed
+        if img_index in completed_indices:
+            count_skipped += 1
+            continue
         
-    print(f"\nAdversarial example generation complete. Generated {count} adversarial samples.")
+        batch_indices.append(img_index)
+        
+        # Process when batch is full OR last image
+        if len(batch_indices) == cfg.data.batch_size or img_index == num_samples - 1:
+            if len(batch_indices) == 0:
+                continue
+                
+            # Load batch by indices
+            batch_org = []
+            batch_tgt = []
+            batch_paths_org = []
+            
+            for idx in batch_indices:
+                img_org, _, path_org = clean_dataset[idx]
+                img_tgt, _, path_tgt = target_dataset[idx]
+                batch_org.append(img_org)
+                batch_tgt.append(img_tgt)
+                batch_paths_org.append(path_org)
+            
+            image_org = torch.stack(batch_org).to(cfg.model.device)
+            image_tgt = torch.stack(batch_tgt).to(cfg.model.device)
+            
+            idx_str = f"{batch_indices[0]}-{batch_indices[-1]}" if len(batch_indices) > 1 else str(batch_indices[0])
+            print(f"\n[Index {idx_str}] Generating Adversarial Sample(s) | Progress: {count_generated + count_skipped + len(batch_indices)}/{num_samples}")
+            
+            # Run attack
+            adv_images = attack_fn(
+                cfg=cfg,
+                ensemble_extractor=ensemble_extractor,
+                ensemble_loss=ensemble_loss,
+                source_crop=source_crop,
+                target_crop=target_crop,
+                img_index=batch_indices[0],
+                image_org=image_org,
+                image_tgt=image_tgt,
+            )
+
+            # Save adversarial images
+            for batch_pos, idx in enumerate(batch_indices):
+                src_path = batch_paths_org[batch_pos]
+                folder = os.path.basename(os.path.dirname(src_path))
+                name = os.path.basename(src_path)
+                
+                folder_to_save = os.path.join(save_base_dir, folder)
+                ensure_dir(folder_to_save)
+                
+                name_noext = os.path.splitext(name)[0]
+                save_path = os.path.join(folder_to_save, name_noext + ".png")
+                torchvision.utils.save_image(adv_images[batch_pos], save_path)
+                print(f"  Saved: index={idx} -> {folder}/{name_noext}.png")
+                count_generated += 1
+            
+            batch_indices = []
+    
+    print(f"\n{'='*60}")
+    print(f"  Adversarial example generation complete!")
+    print(f"  Total generated this run: {count_generated}")
+    print(f"  Skipped (already existed): {count_skipped}")
+    print(f"  Total in output directory: {count_generated + len(completed_indices)}")
+    print(f"{'='*60}")
+
 
 if __name__ == "__main__":
     main()
