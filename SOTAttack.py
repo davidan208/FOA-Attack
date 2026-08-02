@@ -561,30 +561,50 @@ def resolve_device(device_str: str) -> str:
 
 def get_completed_indices(output_dir: str) -> set:
     """
-    Scan output directory to find already-generated adversarial images.
+    Scan output/img/ for any existing hash folder that contains .png results.
+    Finds the correct folder by checking structure, regardless of config hash value.
     Returns a set of integer indices that have been completed.
     """
     completed = set()
     import re
     
-    if not os.path.exists(output_dir):
+    # output_dir is output/img/<hash> — go up to output/img/ and scan all subfolders
+    img_dir = os.path.dirname(output_dir)  # output/img/
+    if not os.path.exists(img_dir):
         return completed
     
-    for root, _, files in os.walk(output_dir):
-        for file in files:
-            if file.lower().endswith('.png'):
-                name_noext = os.path.splitext(file)[0]
-                numbers = re.findall(r'\d+', name_noext)
-                if numbers:
-                    completed.add(int(numbers[-1]))
+    # Find any subfolder under output/img/ that contains .png files
+    for hash_folder in os.listdir(img_dir):
+        hash_path = os.path.join(img_dir, hash_folder)
+        if not os.path.isdir(hash_path):
+            continue
+        for root, _, files in os.walk(hash_path):
+            for file in files:
+                if file.lower().endswith('.png'):
+                    name_noext = os.path.splitext(file)[0]
+                    numbers = re.findall(r'\d+', name_noext)
+                    if numbers:
+                        completed.add(int(numbers[-1]))
+        if len(completed) > 0:
+            print(f"  [Resume] Found existing results in: {hash_path}")
+            break
     
     return completed
 
 
 @hydra.main(version_base=None, config_path="config", config_name="ensemble_3models_100")
 def main(cfg: MainConfig):
+    # Fixed experiment seed for reproducible random crops and K-means initialization.
+    seed = 2026
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     print("=" * 60)
     print("SOTAttack: Starting Adversarial Example Generation Stage")
+    print(f"Experiment seed: {seed}")
     print("=" * 60)
     
     # 0. Resolve device
