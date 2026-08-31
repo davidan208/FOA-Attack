@@ -102,6 +102,70 @@ def print_gpu_memory(prefix="  "):
             print(f"{prefix}GPU {parts[0]}: {parts[1]} / {parts[2]} MiB in use")
 
 
+def resolve_configured_device(config_name, overrides):
+    """The device the runs will actually ask for, after any override."""
+    device = read_config_value(config_name, "model", "device", default="cuda:0")
+    for override in overrides:
+        if override.startswith("model.device="):
+            device = override.split("=", 1)[1]
+    return str(device)
+
+
+def preflight_device(device):
+    """Confirm CUDA is really usable before committing to a long queue.
+
+    SOTAttack falls back to CPU when CUDA is missing, so without this check a
+    smoke test would quietly pass on CPU and the real run would crawl for days.
+    """
+    if "cuda" not in device:
+        print(f"  Device: {device} (no CUDA requested)")
+        return True
+
+    probe = (
+        "import json, torch\n"
+        "info = {'available': torch.cuda.is_available(),\n"
+        "        'count': torch.cuda.device_count() if torch.cuda.is_available() else 0,\n"
+        "        'names': [torch.cuda.get_device_name(i)\n"
+        "                  for i in range(torch.cuda.device_count())]\n"
+        "                 if torch.cuda.is_available() else []}\n"
+        "print('PROBE' + json.dumps(info))\n"
+    )
+    try:
+        out = subprocess.run([sys.executable, "-c", probe], cwd=HERE,
+                             capture_output=True, text=True, timeout=300)
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(f"  Device: cannot probe CUDA ({exc})")
+        return False
+
+    line = next((l for l in out.stdout.splitlines() if l.startswith("PROBE")), None)
+    if line is None:
+        print("  Device: CUDA probe failed - could not import torch.")
+        detail = (out.stderr or out.stdout).strip().splitlines()
+        for l in detail[-5:]:
+            print(f"    {l}")
+        return False
+
+    import json
+    info = json.loads(line[len("PROBE"):])
+    if not info["available"]:
+        print(f"  Device: config asks for '{device}' but torch.cuda.is_available() is False.")
+        return False
+
+    index = 0
+    if ":" in device:
+        try:
+            index = int(device.split(":", 1)[1])
+        except ValueError:
+            index = 0
+    if index >= info["count"]:
+        print(f"  Device: config asks for '{device}' but only {info['count']} GPU(s) present; "
+              f"SOTAttack would silently fall back to cuda:0.")
+        return False
+
+    print(f"  Device: {device} -> {info['names'][index]} ({info['count']} GPU(s) visible)")
+    return True
+
+
 def run_sot(config_name, attack, seed, out_dir, overrides, log_path, dry_run=False):
     """Run SOTAttack once as a subprocess. Returns (returncode, elapsed_seconds)."""
     cmd = [
@@ -183,6 +247,9 @@ def main():
                              "carrying on with the remaining variants")
     parser.add_argument("--cooldown", type=int, default=10,
                         help="Seconds to wait between runs so the GPU is fully released")
+    parser.add_argument("--allow-cpu", action="store_true",
+                        help="Continue even when the configured CUDA device is unusable "
+                             "(the runs would fall back to CPU and take days)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the commands without running anything")
     parser.add_argument("overrides", nargs="*",
@@ -230,6 +297,21 @@ def main():
     if args.overrides:
         print(f"  overrides   : {' '.join(args.overrides)}")
     print(f"  smoke test  : {'skipped' if args.skip_smoke else f'1 batch ({batch_size} images), {args.smoke_steps} steps'}")
+
+    # ------------------------------------------------------------ device check
+    device = resolve_configured_device(args.config_name, args.overrides)
+    if args.dry_run:
+        print(f"  device      : {device} (not probed in a dry run)")
+    elif not preflight_device(device):
+        if args.allow_cpu:
+            print("  --allow-cpu given: continuing on CPU anyway.")
+        else:
+            print("=" * 70)
+            print("\n  Aborted: the GPU this run is configured for is not usable, and every")
+            print("  variant would silently fall back to CPU. Fix the GPU/driver, point at")
+            print("  another device with model.device=cuda:N, or pass --allow-cpu to")
+            print("  proceed on CPU on purpose.")
+            return 1
     print("=" * 70)
 
     # ---------------------------------------------------------------- smoke test
