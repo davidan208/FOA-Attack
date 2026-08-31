@@ -35,4 +35,4 @@ blackbox:
   batch_size: 1
   timeout: 30
 
-attack: 'fgsm' # [fgsm, mifgsm, pgd]
+attack: 'mifgsm' # [fgsm, mifgsm, pgd]

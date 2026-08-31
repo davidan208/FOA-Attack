@@ -592,7 +592,7 @@ def get_completed_indices(output_dir: str) -> set:
     return completed
 
 
-@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models_100")
+@hydra.main(version_base=None, config_path="config", config_name="ensemble_3models")
 def main(cfg: MainConfig):
     # Fixed experiment seed for reproducible random crops and K-means initialization.
     seed = 2026
