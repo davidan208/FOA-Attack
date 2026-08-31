@@ -36,3 +36,7 @@ blackbox:
   timeout: 30
 
 attack: 'mifgsm' # [fgsm, mifgsm, pgd]
+
+# Experiment seed. null = leave PyTorch unseeded (the original default run).
+# Each (attack, seed) pair is written to its own folder: output/img/<attack>_seed<seed>_<hash>
+seed: 2026

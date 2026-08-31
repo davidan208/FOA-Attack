@@ -22,7 +22,7 @@ from surrogates import (
     EnsembleFeatureExtractor_ot,
 )
 
-from utils import hash_training_config, setup_wandb
+from utils import get_run_name, setup_wandb
 
 # Backbone mapping matching standard naming conventions
 BACKBONE_MAP = {
@@ -559,52 +559,49 @@ def resolve_device(device_str: str) -> str:
     return "cpu"
 
 
-def get_completed_indices(output_dir: str) -> set:
+def get_completed_indices(run_dir: str) -> set:
     """
-    Scan output/img/ for any existing hash folder that contains .png results.
-    Finds the correct folder by checking structure, regardless of config hash value.
+    Scan this run's own output folder for .png results already generated.
+    Only this folder is scanned: each (attack, seed) variant has its own folder and
+    must never resume from another variant's results.
     Returns a set of integer indices that have been completed.
     """
     completed = set()
     import re
-    
-    # output_dir is output/img/<hash> — go up to output/img/ and scan all subfolders
-    img_dir = os.path.dirname(output_dir)  # output/img/
-    if not os.path.exists(img_dir):
+
+    if not os.path.exists(run_dir):
         return completed
-    
-    # Find any subfolder under output/img/ that contains .png files
-    for hash_folder in os.listdir(img_dir):
-        hash_path = os.path.join(img_dir, hash_folder)
-        if not os.path.isdir(hash_path):
-            continue
-        for root, _, files in os.walk(hash_path):
-            for file in files:
-                if file.lower().endswith('.png'):
-                    name_noext = os.path.splitext(file)[0]
-                    numbers = re.findall(r'\d+', name_noext)
-                    if numbers:
-                        completed.add(int(numbers[-1]))
-        if len(completed) > 0:
-            print(f"  [Resume] Found existing results in: {hash_path}")
-            break
-    
+
+    for root, _, files in os.walk(run_dir):
+        for file in files:
+            if file.lower().endswith('.png'):
+                name_noext = os.path.splitext(file)[0]
+                numbers = re.findall(r'\d+', name_noext)
+                if numbers:
+                    completed.add(int(numbers[-1]))
+
+    if len(completed) > 0:
+        print(f"  [Resume] Found existing results in: {run_dir}")
+
     return completed
 
 
 @hydra.main(version_base=None, config_path="config", config_name="ensemble_3models")
 def main(cfg: MainConfig):
-    # Fixed experiment seed for reproducible random crops and K-means initialization.
-    seed = 2026
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    # Experiment seed for reproducible random crops and K-means initialization.
+    # seed=null leaves PyTorch unseeded, reproducing the original default behaviour.
+    seed = getattr(cfg, "seed", None)
+    if seed is not None:
+        seed = int(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     print("=" * 60)
     print("SOTAttack: Starting Adversarial Example Generation Stage")
-    print(f"Experiment seed: {seed}")
+    print(f"Experiment seed: {seed if seed is not None else 'default (unseeded)'}")
     print("=" * 60)
     
     # 0. Resolve device
@@ -652,8 +649,8 @@ def main(cfg: MainConfig):
         else torch.nn.Identity()
     )
 
-    # Get configuration hash for output subdirectory
-    config_hash = hash_training_config(cfg)
+    # Name the output subdirectory after this run's attack method, seed and config hash
+    run_name = get_run_name(cfg)
     
     # 6. Resolve attack function
     attack_fn_map = {
@@ -665,8 +662,9 @@ def main(cfg: MainConfig):
     attack_fn = attack_fn_map.get(attack_type, pgd_attack)
     print(f"\nUsing attack method: {attack_type.upper()}")
 
-    # 7. RESUME: Scan output directory for already-completed images
-    save_base_dir = os.path.join(output_dir, "img", config_hash)
+    # 7. RESUME: Scan this run's output directory for already-completed images
+    save_base_dir = os.path.join(output_dir, "img", run_name)
+    print(f"Run folder: {os.path.join(cfg.data.output, 'img', run_name)}")
     completed_indices = get_completed_indices(save_base_dir)
     
     if len(completed_indices) > 0:

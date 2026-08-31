@@ -14,7 +14,7 @@ from tenacity import (
 )
 from config_schema import MainConfig
 from openai import OpenAI
-from utils import load_api_keys, hash_training_config
+from utils import load_api_keys, hash_training_config, get_output_paths
 from openai import RateLimitError
 
 
@@ -99,8 +99,9 @@ def main(cfg: MainConfig):
     config_hash = hash_training_config(cfg)
     print(f"Using training output for config hash: {config_hash}")
 
-    # Setup paths
-    desc_dir = os.path.join(cfg.data.output, "description", config_hash)
+    # Setup paths (resolves the per attack/seed run folder, legacy hash folder as fallback)
+    desc_dir = get_output_paths(cfg, config_hash)["desc_output_dir"]
+    print(f"Reading descriptions from: {desc_dir}")
     tgt_file = os.path.join(desc_dir, f"target_{cfg.blackbox.model_name}.txt")
     adv_file = os.path.join(desc_dir, f"adversarial_{cfg.blackbox.model_name}.txt")
     score_file = os.path.join(desc_dir, f"scores_{cfg.blackbox.model_name}.txt")

@@ -68,6 +68,7 @@ class MainConfig:
     wandb: WandbConfig = field(default_factory=WandbConfig)
     blackbox: BlackboxConfig = field(default_factory=BlackboxConfig)
     attack: str = "fgsm"  # can be [fgsm, mifgsm, pgd]
+    seed: Optional[int] = 2026  # null leaves PyTorch unseeded (original behaviour)
 
 
 # register config for different setting

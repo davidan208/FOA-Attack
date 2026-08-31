@@ -5,7 +5,7 @@ import json
 import yaml
 import hashlib
 import base64
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Optional, Union
 from omegaconf import OmegaConf
 import wandb
 from config_schema import MainConfig
@@ -136,17 +136,45 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def get_output_paths(cfg: MainConfig, config_hash: str) -> Dict[str, str]:
+def get_seed_label(cfg: MainConfig) -> str:
+    """Readable label for the run seed ('default' when PyTorch is left unseeded)."""
+    seed = getattr(cfg, "seed", None)
+    return "default" if seed is None else str(int(seed))
+
+
+def get_run_name(cfg: MainConfig) -> str:
+    """Folder name identifying one run: attack method, seed, and config hash.
+
+    Two runs that differ only by seed produce different names, so each variant
+    keeps its own results folder instead of overwriting or resuming the other.
+    """
+    return f"{cfg.attack}_seed{get_seed_label(cfg)}_{hash_training_config(cfg)[:8]}"
+
+
+def get_output_paths(cfg: MainConfig, config_hash: Optional[str] = None) -> Dict[str, str]:
     """Get dictionary of output paths based on config.
-    
+
     Args:
         cfg: Configuration object
-        config_hash: Hash of training config
-        
+        config_hash: Legacy hash-only folder name, used as a fallback for runs
+            generated before folders were named per attack/seed
+
     Returns:
         Dict[str, str]: Dictionary containing output paths
     """
-    return {
-        'output_dir': os.path.join(cfg.data.output, "img", config_hash),
-        'desc_output_dir': os.path.join(cfg.data.output, "description", config_hash)
-    } 
+    run_name = get_run_name(cfg)
+    legacy_name = config_hash if config_hash is not None else hash_training_config(cfg)
+
+    img_new = os.path.join(cfg.data.output, "img", run_name)
+    desc_new = os.path.join(cfg.data.output, "description", run_name)
+    img_legacy = os.path.join(cfg.data.output, "img", legacy_name)
+    desc_legacy = os.path.join(cfg.data.output, "description", legacy_name)
+
+    has_new = os.path.exists(img_new) or os.path.exists(desc_new)
+    has_legacy = os.path.exists(img_legacy) or os.path.exists(desc_legacy)
+
+    if not has_new and has_legacy:
+        print(f"  [Paths] No '{run_name}' folder; falling back to legacy folder '{legacy_name}'.")
+        return {'output_dir': img_legacy, 'desc_output_dir': desc_legacy}
+
+    return {'output_dir': img_new, 'desc_output_dir': desc_new}
