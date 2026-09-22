@@ -17,7 +17,7 @@ e.g. remain/mifgsm/seed2026/ and remain/mifgsm/seeddefault/.
 
 Typical use:
 
-    python run_variants.py                      # mifgsm, seeds: default + 2026
+    python run_variants.py                      # pgd, seeds: default + 2026
     python run_variants.py --smoke-only         # only the pre-flight check
     python run_variants.py --dry-run            # print the commands, run nothing
 
@@ -227,7 +227,7 @@ def main():
     )
     parser.add_argument("--config-name", default="ensemble_3models",
                         help="Hydra config in config/ to base every run on")
-    parser.add_argument("--attacks", default="mifgsm",
+    parser.add_argument("--attacks", default="pgd",
                         help="Comma-separated attack methods [fgsm, mifgsm, pgd]")
     parser.add_argument("--seeds", default="default,2026",
                         help="Comma-separated seeds; 'default' means unseeded")
