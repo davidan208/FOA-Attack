@@ -22,6 +22,13 @@ ROOT=ablation_crops
 QUEUE_LOG="$ROOT/queue.log"
 mkdir -p "$ROOT"
 
+# Abort if this Python cannot see a GPU: SOTAttack would silently fall back to CPU.
+if ! "$PYTHON" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)"; then
+    echo "$(date '+%F %T') | CUDA not available for $(command -v "$PYTHON") - aborting" | tee -a "$QUEUE_LOG"
+    exit 1
+fi
+echo "$(date '+%F %T') | python: $(command -v "$PYTHON") | GPU: $("$PYTHON" -c 'import torch; print(torch.cuda.get_device_name(0))')" | tee -a "$QUEUE_LOG"
+
 for M in 7 3 1; do
     OUT="$ROOT/M$M"
     mkdir -p "$OUT"
