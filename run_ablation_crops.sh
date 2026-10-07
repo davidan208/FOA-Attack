@@ -29,7 +29,7 @@ if ! "$PYTHON" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() el
 fi
 echo "$(date '+%F %T') | python: $(command -v "$PYTHON") | GPU: $("$PYTHON" -c 'import torch; print(torch.cuda.get_device_name(0))')" | tee -a "$QUEUE_LOG"
 
-for M in 7 3 1; do
+for M in 3 1; do
     OUT="$ROOT/M$M"
     mkdir -p "$OUT"
     echo "$(date '+%F %T') | start M=$M -> $OUT" | tee -a "$QUEUE_LOG"
