@@ -5,14 +5,22 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-# Only what the attack path imports; torch/torchvision come with the base image.
+# Versions pinned to the conda env (torch 2.9) where this code is known to run.
+# numba is a hard import of kmeans_pytorch; torch/torchvision come with the base image.
 RUN pip install --no-cache-dir \
+    numpy==2.4.6 \
+    pillow==12.2.0 \
     transformers==4.49.0 \
+    tokenizers==0.21.4 \
+    safetensors==0.8.0 \
+    huggingface_hub==0.36.2 \
     hydra-core==1.3.2 \
     omegaconf==2.3.0 \
     wandb==0.27.0 \
-    PyYAML \
-    tqdm \
+    PyYAML==6.0.3 \
+    tqdm==4.67.1 \
+    numba==0.65.0 \
+    llvmlite==0.47.0 \
     git+https://github.com/subhadarship/kmeans_pytorch.git
 
 ARG BRANCH=ablation_study
