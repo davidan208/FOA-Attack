@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Base x adaptive ablation (goc, A, B, AB) for every attack, first 100 pairs, run inside Docker.
+# Base x adaptive ablation (goc, A, B, AB) with FGSM, first 100 pairs, one GPU, run inside Docker.
 #
 #   goc : base + adaptive        (SOTAttack.py)
 #   A   : base + no adaptive     (SOTAttack_ablation.py)
@@ -8,15 +8,14 @@
 # M = optim.num_crops = 5 crops, always averaged uniformly. 300 steps, batch 16, unseeded.
 #
 # Run on the GPU host:
-#   bash docker_ablation.sh                      # all 4 ablations x fgsm, mifgsm, pgd on GPU 6
+#   bash docker_ablation.sh                      # goc, A, B, AB with fgsm on GPU 6
 #   GPU=0 bash docker_ablation.sh                # another physical GPU
-#   ATTACKS=fgsm bash docker_ablation.sh         # only FGSM
-#   tail -f ablation_base_adaptive/runner.log
+#   watch -n 1 bash monitor.sh
 #
 # The image clones the code from the 'ablation_study' branch (see Dockerfile); only the
 # output folder and the Hugging Face cache are mounted, so results land on the host:
-#   ablation_base_adaptive/<attack>/seeddefault/             goc
-#   ablation_base_adaptive/<A|B|AB>/<attack>/seeddefault/    ablations
+#   ablation_base_adaptive/fgsm/seeddefault/                 goc
+#   ablation_base_adaptive/<A|B|AB>/fgsm/seeddefault/        ablations
 #   ablation_base_adaptive/runner.log                        full queue output
 # Re-running the script resumes every variant from the images already saved.
 
@@ -29,7 +28,7 @@ GPU=${GPU:-6}
 HF_CACHE=${HF_CACHE:-$HOME/.cache/huggingface}
 ROOT=${ROOT:-ablation_base_adaptive}
 ABLATIONS=${ABLATIONS:-goc,A,B,AB}
-ATTACKS=${ATTACKS:-fgsm,mifgsm,pgd}
+ATTACKS=${ATTACKS:-fgsm}
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
     echo "A container named '$NAME' already exists. Check it with 'docker logs $NAME',"
@@ -66,6 +65,6 @@ docker run -d --rm \
         "$@"
 
 echo "Started container '$NAME' on GPU $GPU."
-echo "  progress : tail -f $ROOT/runner.log"
+echo "  progress : watch -n 1 bash monitor.sh"
 echo "  results  : $OUT_HOST"
 echo "  stop     : docker stop $NAME   (re-run this script to resume)"
