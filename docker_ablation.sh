@@ -60,6 +60,8 @@ docker run -d --rm \
         --attacks "$ATTACKS" \
         --seeds default \
         --root "$ROOT" \
+        data.cle_data_path=resources/images/bigscale_100 \
+        data.tgt_data_path=resources/images/target_images_100 \
         data.num_samples=100 data.batch_size=16 optim.num_crops=5 optim.steps=300 \
         "$@"
 
