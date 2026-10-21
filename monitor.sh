@@ -12,4 +12,4 @@ done
 echo "TOTAL: $total/300"
 echo
 echo "Last saved : $(grep 'Saved:' "$R/runner.log" 2>/dev/null | tail -1)"
-echo "Now        : $(tail -c 400 "$R/runner.log" 2>/dev/null | tr '\r' '\n' | grep -v '^\s*$' | tail -1)"
+echo "Now        : $(tail -c 20000 "$R/runner.log" 2>/dev/null | tr '\r' '\n' | grep 'FGSM \[' | tail -1)"
