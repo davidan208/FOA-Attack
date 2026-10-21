@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Base x adaptive ablation (goc, A, B, AB) with FGSM, first 100 pairs, one GPU, run inside Docker.
+# Base x adaptive ablation (A, B, AB) with FGSM, first 100 pairs, one GPU, run inside Docker.
+# The original (goc) is the existing main run; add it with ABLATIONS=goc,A,B,AB if ever needed.
 #
 #   goc : base + adaptive        (SOTAttack.py)
 #   A   : base + no adaptive     (SOTAttack_ablation.py)
@@ -8,13 +9,12 @@
 # M = optim.num_crops = 5 crops, always averaged uniformly. 300 steps, batch 16, unseeded.
 #
 # Run on the GPU host:
-#   bash docker_ablation.sh                      # goc, A, B, AB with fgsm on GPU 6
+#   bash docker_ablation.sh                      # A, B, AB with fgsm on GPU 6
 #   GPU=0 bash docker_ablation.sh                # another physical GPU
 #   watch -n 1 bash monitor.sh
 #
 # The image clones the code from the 'ablation_study' branch (see Dockerfile); only the
 # output folder and the Hugging Face cache are mounted, so results land on the host:
-#   ablation_base_adaptive/fgsm/seeddefault/                 goc
 #   ablation_base_adaptive/<A|B|AB>/fgsm/seeddefault/        ablations
 #   ablation_base_adaptive/runner.log                        full queue output
 # Re-running the script resumes every variant from the images already saved.
@@ -27,7 +27,7 @@ NAME=${NAME:-foa-ablation}
 GPU=${GPU:-6}
 HF_CACHE=${HF_CACHE:-$HOME/.cache/huggingface}
 ROOT=${ROOT:-ablation_base_adaptive}
-ABLATIONS=${ABLATIONS:-goc,A,B,AB}
+ABLATIONS=${ABLATIONS:-A,B,AB}
 ATTACKS=${ATTACKS:-fgsm}
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
