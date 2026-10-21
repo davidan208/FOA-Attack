@@ -41,6 +41,9 @@ class OptimConfig:
     steps: int = 300
     use_mca: bool = True
     num_crops: int = 5
+    # Read only by SOTAttack_ablation.py; SOTAttack.py always behaves as base + adaptive.
+    use_base: bool = True
+    adaptive: bool = True
 
 
 @dataclass

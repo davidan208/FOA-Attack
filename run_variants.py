@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run SOTAttack for several (attack, seed) variants back to back, unattended.
+"""Run SOTAttack for several (ablation, attack, seed) variants back to back, unattended.
 
 Every variant is smoke-tested on a single batch first, so a broken configuration
 fails within minutes instead of hours into the real run. Only if all smoke tests
@@ -8,16 +8,24 @@ pass does the full generation start.
 Each variant runs as its own subprocess: when it exits the GPU memory is returned
 to the driver, so one variant can never leak memory into the next one.
 
+Ablations (base term x adaptive weighting; the M crops are always averaged uniformly):
+
+    goc : base + adaptive        (SOTAttack.py, the original)
+    A   : base + no adaptive     (SOTAttack_ablation.py)
+    B   : no base + adaptive     (SOTAttack_ablation.py)
+    AB  : no base + no adaptive  (SOTAttack_ablation.py)
+
 Results are laid out one folder per variant:
 
-    <root>/<attack>/seed<label>/img/<run_name>/...
-    <root>/<attack>/seed<label>/run.log
+    <root>/<attack>/seed<label>/...             for goc (original layout)
+    <root>/<ablation>/<attack>/seed<label>/...  for A, B, AB
 
-e.g. remain/mifgsm/seed2026/ and remain/mifgsm/seeddefault/.
+e.g. remain/pgd/seeddefault/ and remain/AB/pgd/seeddefault/.
 
 Typical use:
 
-    python run_variants.py                      # pgd, seeds: default + 2026
+    python run_variants.py                      # A, B, AB with pgd, seed default
+    python run_variants.py --ablations goc      # the original method
     python run_variants.py --smoke-only         # only the pre-flight check
     python run_variants.py --dry-run            # print the commands, run nothing
 
@@ -36,7 +44,18 @@ from datetime import datetime, timedelta
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SOT_SCRIPT = os.path.join(HERE, "SOTAttack.py")
+
+ABLATIONS = {
+    "goc": ("SOTAttack.py", []),
+    "A": ("SOTAttack_ablation.py", ["optim.use_base=true", "optim.adaptive=false"]),
+    "B": ("SOTAttack_ablation.py", ["optim.use_base=false", "optim.adaptive=true"]),
+    "AB": ("SOTAttack_ablation.py", ["optim.use_base=false", "optim.adaptive=false"]),
+}
+
+
+def variant_dir(root, ablation, attack, seed):
+    parts = [root] if ablation == "goc" else [root, ablation]
+    return os.path.join(*parts, attack, f"seed{seed_label(seed)}")
 
 
 def seed_label(seed):
@@ -166,10 +185,10 @@ def preflight_device(device):
     return True
 
 
-def run_sot(config_name, attack, seed, out_dir, overrides, log_path, dry_run=False):
+def run_sot(script, config_name, attack, seed, out_dir, overrides, log_path, dry_run=False):
     """Run SOTAttack once as a subprocess. Returns (returncode, elapsed_seconds)."""
     cmd = [
-        sys.executable, SOT_SCRIPT,
+        sys.executable, os.path.join(HERE, script),
         f"--config-name={config_name}",
         f"attack={attack}",
         f"seed={'null' if seed is None else seed}",
@@ -187,7 +206,7 @@ def run_sot(config_name, attack, seed, out_dir, overrides, log_path, dry_run=Fal
     with open(log_path, "ab") as log:
         header = (
             f"\n{'=' * 70}\n"
-            f"{datetime.now():%Y-%m-%d %H:%M:%S} | attack={attack} seed={seed_label(seed)}\n"
+            f"{datetime.now():%Y-%m-%d %H:%M:%S} | {os.path.basename(script)} attack={attack} seed={seed_label(seed)}\n"
             f"{' '.join(cmd)}\n"
             f"{'=' * 70}\n"
         )
@@ -225,11 +244,13 @@ def main():
         description="Smoke-test then sequentially generate SOTAttack variants.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--ablations", default="A,B,AB",
+                        help=f"Comma-separated ablations {list(ABLATIONS)}")
     parser.add_argument("--config-name", default="ensemble_3models",
                         help="Hydra config in config/ to base every run on")
     parser.add_argument("--attacks", default="pgd",
                         help="Comma-separated attack methods [fgsm, mifgsm, pgd]")
-    parser.add_argument("--seeds", default="default,2026",
+    parser.add_argument("--seeds", default="default",
                         help="Comma-separated seeds; 'default' means unseeded")
     parser.add_argument("--root", default="remain",
                         help="Root folder holding one subfolder per variant")
@@ -266,11 +287,15 @@ def main():
             f"e.g. python run_variants.py data.batch_size=5"
         )
 
+    ablations = [a.strip() for a in args.ablations.split(",") if a.strip()]
+    unknown = [a for a in ablations if a not in ABLATIONS]
+    if unknown:
+        parser.error(f"Unknown ablation(s): {', '.join(unknown)}. Choose from {list(ABLATIONS)}.")
     attacks = [a.strip() for a in args.attacks.split(",") if a.strip()]
     seeds = [parse_seed(s) for s in args.seeds.split(",") if s.strip()]
-    variants = [(a, s) for a in attacks for s in seeds]
+    variants = [(ab, a, s) for ab in ablations for a in attacks for s in seeds]
     if not variants:
-        parser.error("No variants to run: check --attacks and --seeds.")
+        parser.error("No variants to run: check --ablations, --attacks and --seeds.")
 
     root = os.path.abspath(os.path.join(HERE, args.root)) \
         if not os.path.isabs(args.root) else args.root
@@ -289,9 +314,9 @@ def main():
     print("=" * 70)
     print(f"  config      : {args.config_name}")
     print(f"  variants    : {len(variants)}")
-    for attack, seed in variants:
-        print(f"                - {attack}, seed={seed_label(seed)} "
-              f"-> {os.path.join(args.root, attack, 'seed' + seed_label(seed))}")
+    for ablation, attack, seed in variants:
+        print(f"                - {ablation}, {attack}, seed={seed_label(seed)} "
+              f"-> {variant_dir(args.root, ablation, attack, seed)}")
     print(f"  batch size  : {batch_size}")
     print(f"  num samples : {num_samples} per variant")
     if args.overrides:
@@ -323,18 +348,19 @@ def main():
         smoke_root = os.path.join(root, "_smoke")
         failures = []
 
-        for position, (attack, seed) in enumerate(variants, start=1):
-            name = f"{attack}, seed={seed_label(seed)}"
+        for position, (ablation, attack, seed) in enumerate(variants, start=1):
+            name = f"{ablation}, {attack}, seed={seed_label(seed)}"
             print(f"\n--- smoke {position}/{len(variants)}: {name} ---")
 
-            out_dir = os.path.join(smoke_root, f"{attack}_seed{seed_label(seed)}")
+            script, ablation_overrides = ABLATIONS[ablation]
+            out_dir = os.path.join(smoke_root, f"{ablation}_{attack}_seed{seed_label(seed)}")
             log_path = os.path.join(smoke_root, "smoke.log")
             if not args.dry_run:
                 os.makedirs(smoke_root, exist_ok=True)
 
             returncode, elapsed = run_sot(
-                args.config_name, attack, seed, out_dir,
-                list(args.overrides) + [
+                script, args.config_name, attack, seed, out_dir,
+                ablation_overrides + list(args.overrides) + [
                     f"data.num_samples={batch_size}",
                     f"optim.steps={args.smoke_steps}",
                 ],
@@ -384,9 +410,10 @@ def main():
     results = []
     queue_start = time.time()
 
-    for position, (attack, seed) in enumerate(variants, start=1):
-        name = f"{attack}, seed={seed_label(seed)}"
-        out_dir = os.path.join(root, attack, f"seed{seed_label(seed)}")
+    for position, (ablation, attack, seed) in enumerate(variants, start=1):
+        name = f"{ablation}, {attack}, seed={seed_label(seed)}"
+        script, ablation_overrides = ABLATIONS[ablation]
+        out_dir = variant_dir(root, ablation, attack, seed)
         log_path = os.path.join(out_dir, "run.log")
         if not args.dry_run:
             os.makedirs(out_dir, exist_ok=True)
@@ -398,8 +425,8 @@ def main():
         print(f"{'=' * 70}")
 
         returncode, elapsed = run_sot(
-            args.config_name, attack, seed, out_dir,
-            list(args.overrides), log_path, dry_run=args.dry_run,
+            script, args.config_name, attack, seed, out_dir,
+            ablation_overrides + list(args.overrides), log_path, dry_run=args.dry_run,
         )
 
         produced = 0 if args.dry_run else count_pngs(os.path.join(out_dir, "img"))
@@ -423,7 +450,7 @@ def main():
     print("  SUMMARY")
     print("=" * 70)
     for name, status, produced, elapsed, out_dir in results:
-        print(f"  {name:<28s} {status:<20s} {produced:>5d} img  {fmt_duration(elapsed)}")
+        print(f"  {name:<32s} {status:<20s} {produced:>5d} img  {fmt_duration(elapsed)}")
         print(f"    {out_dir}")
     print(f"\n  Total wall clock: {fmt_duration(time.time() - queue_start)}")
     print("=" * 70)

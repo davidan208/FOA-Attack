@@ -94,7 +94,11 @@ def hash_training_config(cfg: MainConfig) -> str:
         },
         "attack": cfg.attack,
     }
-    
+    # Ablation flags are hashed only when off, so the original runs keep their folder names.
+    for flag in ("use_base", "adaptive"):
+        if not cfg.optim.get(flag, True):
+            train_config["optim"][flag] = False
+
     # Convert to JSON string with sorted keys
     json_str = json.dumps(train_config, sort_keys=True)
     return hashlib.md5(json_str.encode()).hexdigest()
