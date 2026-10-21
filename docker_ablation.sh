@@ -8,7 +8,7 @@
 # M = optim.num_crops = 5 crops, always averaged uniformly. 300 steps, batch 16, unseeded.
 #
 # Run on the GPU host:
-#   bash docker_ablation.sh                      # all 4 ablations x fgsm, mifgsm, pgd on GPU 3
+#   bash docker_ablation.sh                      # all 4 ablations x fgsm, mifgsm, pgd on GPU 6
 #   GPU=0 bash docker_ablation.sh                # another physical GPU
 #   ATTACKS=fgsm bash docker_ablation.sh         # only FGSM
 #   tail -f ablation_base_adaptive/runner.log
@@ -25,7 +25,7 @@ cd "$(dirname "$0")"
 
 IMAGE=${IMAGE:-foa-attack}
 NAME=${NAME:-foa-ablation}
-GPU=${GPU:-3}
+GPU=${GPU:-6}
 HF_CACHE=${HF_CACHE:-$HOME/.cache/huggingface}
 ROOT=${ROOT:-ablation_base_adaptive}
 ABLATIONS=${ABLATIONS:-goc,A,B,AB}

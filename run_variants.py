@@ -142,11 +142,17 @@ def preflight_device(device):
 
     probe = (
         "import json, torch\n"
+        "error = None\n"
+        "try:\n"
+        "    torch.cuda.init()\n"
+        "except Exception as exc:\n"
+        "    error = f'{type(exc).__name__}: {exc}'\n"
         "info = {'available': torch.cuda.is_available(),\n"
         "        'count': torch.cuda.device_count() if torch.cuda.is_available() else 0,\n"
         "        'names': [torch.cuda.get_device_name(i)\n"
         "                  for i in range(torch.cuda.device_count())]\n"
-        "                 if torch.cuda.is_available() else []}\n"
+        "                 if torch.cuda.is_available() else [],\n"
+        "        'torch': torch.__version__, 'cuda': torch.version.cuda, 'error': error}\n"
         "print('PROBE' + json.dumps(info))\n"
     )
     try:
@@ -168,6 +174,10 @@ def preflight_device(device):
     info = json.loads(line[len("PROBE"):])
     if not info["available"]:
         print(f"  Device: config asks for '{device}' but torch.cuda.is_available() is False.")
+        print(f"    torch {info['torch']} built for CUDA {info['cuda']}")
+        if info["error"]:
+            print(f"    CUDA init error: {info['error']}")
+        print_gpu_memory(prefix="    ")
         return False
 
     index = 0
