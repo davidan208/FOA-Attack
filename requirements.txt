@@ -1,4 +1,5 @@
 # SOTAttack + lambda logging, without Docker. Python 3.10 or 3.11.
+# Easiest: bash setup_vast.sh (isolated .venv, no clash with packages already on the machine).
 # Same versions as the Dockerfile (requirements_old.txt of the original server env).
 #
 # 1. torch first, matching the GPU:
@@ -17,8 +18,8 @@ huggingface-hub==0.28.1
 hydra-core==1.3.2
 omegaconf==2.3.0
 wandb==0.19.1
-PyYAML==6.0.2
-tqdm==4.67.1
+PyYAML>=6.0
+tqdm>=4.66
 numba==0.60.0
 llvmlite==0.43.0
 matplotlib==3.10.0
