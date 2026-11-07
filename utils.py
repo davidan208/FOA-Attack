@@ -98,6 +98,10 @@ def hash_training_config(cfg: MainConfig) -> str:
     for flag in ("use_base", "adaptive"):
         if not cfg.optim.get(flag, True):
             train_config["optim"][flag] = False
+    for key in ("mix", "enc_weight"):
+        value = cfg.optim.get(key, "adaptive")
+        if value != "adaptive":
+            train_config["optim"][key] = value
 
     # Convert to JSON string with sorted keys
     json_str = json.dumps(train_config, sort_keys=True)

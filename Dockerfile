@@ -21,6 +21,8 @@ RUN pip install --no-cache-dir \
     tqdm==4.67.1 \
     numba==0.60.0 \
     llvmlite==0.43.0 \
+    google-genai==2.6.0 \
+    matplotlib==3.10.0 \
     git+https://github.com/subhadarship/kmeans_pytorch.git
 
 ARG BRANCH=ablation_study

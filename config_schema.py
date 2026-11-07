@@ -44,6 +44,11 @@ class OptimConfig:
     # Read only by SOTAttack_ablation.py; SOTAttack.py always behaves as base + adaptive.
     use_base: bool = True
     adaptive: bool = True
+    # SOTAttack.py: lambda in q_i = lambda_i*s_i + (1-lambda_i)*m_i.
+    #   adaptive = min(r_i, 1) (original), base_only = 1, multi_only = 0, uniform = 1/(M+1)
+    mix: str = "adaptive"
+    # SOTAttack.py: encoder weights w_i. adaptive = N*softmax(r) (original), uniform = 1
+    enc_weight: str = "adaptive"
 
 
 @dataclass
@@ -62,6 +67,15 @@ class ModelConfig:
 
 
 @dataclass
+class LogConfig:
+    """Read-only measurement of the attack (SOTAttack.py); never changes the result."""
+
+    lambda_log: bool = False  # per image x step x encoder: s, m, r, lambda, w
+    diag_grad: bool = False  # also flip/share of sign(grad) without the multi-view term
+    diag_every: int = 10  # run the gradient diagnostic every N steps
+
+
+@dataclass
 class MainConfig:
     """Main configuration combining all sub-configs"""
 
@@ -70,6 +84,7 @@ class MainConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
     blackbox: BlackboxConfig = field(default_factory=BlackboxConfig)
+    log: LogConfig = field(default_factory=LogConfig)
     attack: str = "fgsm"  # can be [fgsm, mifgsm, pgd]
     seed: Optional[int] = 2026  # null leaves PyTorch unseeded (original behaviour)
 

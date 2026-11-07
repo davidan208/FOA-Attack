@@ -1,4 +1,6 @@
 import os
+import json
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -41,15 +43,33 @@ class SOTLossFunction(nn.Module):
     Modify this class to implement novel loss formulations (e.g., custom transport plans,
     metric learning losses, or new global/local alignment measures).
     """
-    def __init__(self, extractors: List[nn.Module], cluster_number: int = 10):
+    MIX_MODES = ("adaptive", "base_only", "multi_only", "uniform")
+    ENC_WEIGHT_MODES = ("adaptive", "uniform")
+
+    def __init__(self, extractors: List[nn.Module], cluster_number: int = 10,
+                 mix: str = "adaptive", enc_weight: str = "adaptive"):
         super(SOTLossFunction, self).__init__()
+        if mix not in self.MIX_MODES:
+            raise ValueError(f"optim.mix must be one of {self.MIX_MODES}, got '{mix}'")
+        if enc_weight not in self.ENC_WEIGHT_MODES:
+            raise ValueError(f"optim.enc_weight must be one of {self.ENC_WEIGHT_MODES}, got '{enc_weight}'")
         self.extractors = nn.ModuleList(extractors)
         self.cluster_number = cluster_number
+        self.mix = mix
+        self.enc_weight = enc_weight
         self.ground_truth_global = []
         self.ground_truth_local = []
-        
+
         # State tracking for dynamic weighting calculation
         self.previous_loss_list = []
+
+        # Measurement hooks (read-only; set by StepLogger). record: store detached values of the
+        # last forward in self.last_record. keep_graph: also keep the live s_i tensors for
+        # the gradient diagnostic in self.last_graph.
+        self.record = False
+        self.keep_graph = False
+        self.last_record = None
+        self.last_graph = None
 
     @torch.no_grad()
     def set_ground_truth(self, x: torch.Tensor):
@@ -155,6 +175,7 @@ class SOTLossFunction(nn.Module):
         Supports Multi-Crop Alignment (MCA) dynamically balanced based on optimization state.
         """
         loss_list = []
+        base_terms = [[] for _ in self.extractors]   # per encoder: [(global_b, local_b)] per sample
         
         for index, model in enumerate(self.extractors):
             gt_global = self.ground_truth_global[index]   # [B, dim]
@@ -168,8 +189,11 @@ class SOTLossFunction(nn.Module):
             local_alignment = 0
             for b in range(batch_size):
                 # Compute standard OT loss (un-cropped or base image), per sample
-                global_alignment = global_alignment + self.OT(gt_global[b:b + 1], feat_global[b:b + 1])
-                local_alignment = local_alignment + self.OT(gt_local[b], feat_local[b])
+                g_b = self.OT(gt_global[b:b + 1], feat_global[b:b + 1])
+                l_b = self.OT(gt_local[b], feat_local[b])
+                global_alignment = global_alignment + g_b
+                local_alignment = local_alignment + l_b
+                base_terms[index].append((g_b, l_b))
             global_alignment = global_alignment / batch_size
             local_alignment = local_alignment / batch_size
             
@@ -188,7 +212,6 @@ class SOTLossFunction(nn.Module):
             ratios.append(ratio)
             
         # Calculate standard ensemble weights (focusing on struggling encoders)
-        import numpy as np
         ratios_np = np.array(ratios)
         weights_softmax = np.exp(ratios_np / 1.0)
         weights_softmax /= np.sum(weights_softmax)
@@ -200,7 +223,10 @@ class SOTLossFunction(nn.Module):
             
         # Compute MCA loss if crop features are provided
         mca_loss_list = []
+        crop_terms = [[] for _ in self.extractors]   # per encoder, per crop: [(global_b, local_b)]
+        num_views = 0
         if use_mca and crop_features is not None and len(crop_features) > 0:
+            num_views = len(crop_features)
             for index, model in enumerate(self.extractors):
                 crop_losses = []
                 for crop_feat_dict, crop_feat_local_dict in crop_features:
@@ -213,9 +239,14 @@ class SOTLossFunction(nn.Module):
                     batch_size = gt_global.shape[0]
                     g_align = 0
                     l_align = 0
+                    terms = []
                     for b in range(batch_size):
-                        g_align = g_align + self.OT(gt_global[b:b + 1], c_global[b:b + 1])
-                        l_align = l_align + self.OT(gt_local[b], c_local[b])
+                        g_c = self.OT(gt_global[b:b + 1], c_global[b:b + 1])
+                        l_c = self.OT(gt_local[b], c_local[b])
+                        g_align = g_align + g_c
+                        l_align = l_align + l_c
+                        terms.append((g_c, l_c))
+                    crop_terms[index].append(terms)
                     g_align = g_align / batch_size
                     l_align = l_align / batch_size
                     crop_losses.append(g_align + 0.2 * l_align)
@@ -225,18 +256,176 @@ class SOTLossFunction(nn.Module):
             
         # Dynamically balance OT vs MCA loss for each model
         combined_losses = []
+        lambdas = []
         for i in range(len(self.extractors)):
-            lambda_i = min(ratios[i], 1.0)
+            if self.mix == "adaptive":
+                lambda_i = min(ratios[i], 1.0)
+            elif self.mix == "base_only":
+                lambda_i = 1.0
+            elif self.mix == "multi_only":
+                lambda_i = 0.0
+            else:  # uniform: every one of the M + 1 views weighs 1 / (M + 1)
+                lambda_i = 1.0 / (num_views + 1)
+            lambdas.append(lambda_i)
             combined_loss = lambda_i * loss_list[i] + (1.0 - lambda_i) * mca_loss_list[i]
             combined_losses.append(combined_loss)
+
+        if self.enc_weight == "uniform":
+            weights_softmax = np.ones(len(self.extractors))
             
         # Sum dynamically weighted model losses across the ensemble
         total_loss = sum(
             weights_softmax[i] * combined_losses[i]
             for i in range(len(self.extractors))
         )
+
+        if self.record:
+            self.last_record = self._collect_record(
+                loss_list, mca_loss_list, ratios, lambdas, weights_softmax,
+                base_terms, crop_terms if num_views > 0 else None,
+            )
+        if self.keep_graph:
+            self.last_graph = {
+                "s": loss_list,
+                "lam": lambdas,
+                "w": [float(w) for w in weights_softmax],
+            }
         
         return total_loss
+
+    @staticmethod
+    def _collect_record(loss_list, mca_loss_list, ratios, lambdas, weights,
+                        base_terms, crop_terms) -> Dict[str, Any]:
+        """Detached copies of the values this step used; one device sync for all of them."""
+        n = len(loss_list)
+        batch = len(base_terms[0])
+        scalars = list(loss_list) + list(mca_loss_list)
+        for i in range(n):
+            for g, l in base_terms[i]:
+                scalars += [g, l]
+        if crop_terms is not None:
+            for i in range(n):
+                for terms in crop_terms[i]:
+                    for g, l in terms:
+                        scalars += [g, l]
+        vals = torch.stack([t.detach().float().reshape(()) for t in scalars]).cpu().tolist()
+
+        s, m, pos = vals[:n], vals[n:2 * n], 2 * n
+        s_img = []
+        for i in range(n):
+            s_img.append([vals[pos + 2 * b] + 0.2 * vals[pos + 2 * b + 1] for b in range(batch)])
+            pos += 2 * batch
+        if crop_terms is None:
+            m_img = s_img
+        else:
+            m_img = []
+            for i in range(n):
+                num_views = len(crop_terms[i])
+                acc = [0.0] * batch
+                for _ in range(num_views):
+                    for b in range(batch):
+                        acc[b] += vals[pos + 2 * b] + 0.2 * vals[pos + 2 * b + 1]
+                    pos += 2 * batch
+                m_img.append([a / num_views for a in acc])
+        return {
+            "s": s, "m": m, "r": [float(x) for x in ratios], "lam": [float(x) for x in lambdas],
+            "w": [float(x) for x in weights], "s_img": s_img, "m_img": m_img, "batch": batch,
+        }
+
+
+class StepLogger:
+    """
+    Read-only measurement of the mixing coefficients (and, optionally, of how much the
+    multi-view branch changes the update direction). It only reads values the attack already
+    computed: no extra random draws, no extra forward pass.
+
+    lambda.jsonl    : one row per image x step x encoder
+                      img, t, enc, s, m, r, lam, w, s_img, m_img, batch
+    grad_diag.jsonl : one row per image x diagnosed step:
+                      img, t, flip, share, zero_base, flip_nz
+                      zero_base = share of pixels whose base-only gradient is exactly 0 (outside
+                      the base crop); flip_nz = flip restricted to pixels where it is not 0
+    """
+
+    def __init__(self, ensemble_loss: "SOTLossFunction", enc_names: List[str], log_dir: str,
+                 diag_grad: bool = False, diag_every: int = 10):
+        ensure_dir(log_dir)
+        self.loss = ensemble_loss
+        self.enc_names = list(enc_names)
+        self.diag_grad = diag_grad
+        self.diag_every = max(1, int(diag_every))
+        self.indices: List[int] = []
+        self.lambda_file = open(os.path.join(log_dir, "lambda.jsonl"), "a", encoding="utf-8")
+        self.diag_file = (open(os.path.join(log_dir, "grad_diag.jsonl"), "a", encoding="utf-8")
+                          if diag_grad else None)
+        ensemble_loss.record = True
+        print(f"  [StepLogger] writing to {log_dir} (diag_grad={diag_grad}, every {self.diag_every} steps)")
+
+    def start_batch(self, indices: List[int]):
+        self.indices = list(indices)
+
+    def _diag_now(self, t: int) -> bool:
+        return self.diag_grad and t % self.diag_every == 0
+
+    def before_forward(self, t: int):
+        self.loss.keep_graph = self._diag_now(t)
+
+    def grad(self, loss: torch.Tensor, delta: torch.Tensor, t: int) -> torch.Tensor:
+        """Same gradient the attack uses; on diagnosed steps also the base-only gradient."""
+        diag = self._diag_now(t)
+        g_full = torch.autograd.grad(loss, delta, create_graph=False, retain_graph=diag)[0]
+        diag_rows = None
+        if diag:
+            graph = self.loss.last_graph
+            j_base = sum(w * lam * s for s, lam, w in zip(graph["s"], graph["lam"], graph["w"]))
+            g_base = torch.autograd.grad(j_base, delta)[0]
+            with torch.no_grad():
+                flat_full = g_full.flatten(1)
+                flat_base = g_base.flatten(1)
+                differs = (torch.sign(flat_full) != torch.sign(flat_base)).float()
+                nonzero = (flat_base != 0).float()
+                flip = differs.mean(dim=1)
+                share = (flat_full - flat_base).norm(dim=1) / (flat_full.norm(dim=1) + 1e-12)
+                zero_base = 1.0 - nonzero.mean(dim=1)
+                flip_nz = (differs * nonzero).sum(dim=1) / nonzero.sum(dim=1).clamp_min(1.0)
+                diag_rows = torch.stack([flip, share, zero_base, flip_nz], dim=1).cpu().tolist()
+            del g_base, j_base
+        self.loss.last_graph = None
+        self.loss.keep_graph = False
+        self.write(t, diag_rows)
+        return g_full
+
+    def write(self, t: int, diag_rows=None):
+        rec = self.loss.last_record
+        if rec is None:
+            return
+        if rec["batch"] != len(self.indices):
+            raise RuntimeError(f"StepLogger: batch of {rec['batch']} but {len(self.indices)} indices")
+        lines = []
+        for b, img in enumerate(self.indices):
+            for i, enc in enumerate(self.enc_names):
+                lines.append(json.dumps({
+                    "img": img, "t": t, "enc": enc,
+                    "s": rec["s"][i], "m": rec["m"][i], "r": rec["r"][i],
+                    "lam": rec["lam"][i], "w": rec["w"][i],
+                    "s_img": rec["s_img"][i][b], "m_img": rec["m_img"][i][b],
+                    "batch": self.indices[0],
+                }))
+        self.lambda_file.write("\n".join(lines) + "\n")
+        self.lambda_file.flush()
+        if diag_rows is not None and self.diag_file is not None:
+            self.diag_file.write("\n".join(
+                json.dumps({"img": img, "t": t, "flip": fl, "share": sh, "zero_base": zb,
+                            "flip_nz": fnz, "batch": self.indices[0]})
+                for img, (fl, sh, zb, fnz) in zip(self.indices, diag_rows)
+            ) + "\n")
+            self.diag_file.flush()
+        self.loss.last_record = None
+
+    def close(self):
+        self.lambda_file.close()
+        if self.diag_file is not None:
+            self.diag_file.close()
 
 # =====================================================================
 
@@ -358,7 +547,10 @@ def get_surrogate_models(cfg: MainConfig, cluster_number: int) -> Tuple[torch.nn
     else:
         ensemble_extractor = models[0]
 
-    ensemble_loss = SOTLossFunction(models, cluster_number=cluster_number)
+    ensemble_loss = SOTLossFunction(
+        models, cluster_number=cluster_number,
+        mix=cfg.optim.mix, enc_weight=cfg.optim.enc_weight,
+    )
     
     return ensemble_extractor, models, ensemble_loss
 
@@ -421,11 +613,14 @@ def fgsm_attack(
     """Perform FGSM attack to generate adversarial perturbations."""
     delta = torch.zeros_like(image_org, requires_grad=True)
     pbar = tqdm(range(cfg.optim.steps), desc=f"FGSM [idx={img_index}]")
+    logger = getattr(ensemble_loss, "step_logger", None)
 
     for epoch in pbar:
         with torch.no_grad():
             ensemble_loss.set_ground_truth(target_crop(image_tgt))
 
+        if logger is not None:
+            logger.before_forward(epoch)
         adv_image = image_org + delta
         loss = get_similarity_loss(cfg, ensemble_extractor, ensemble_loss, adv_image, source_crop if cfg.model.use_source_crop else None)
 
@@ -436,7 +631,10 @@ def fgsm_attack(
         }
         log_metrics(pbar, metrics, img_index, epoch)
 
-        grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
+        if logger is not None:
+            grad = logger.grad(loss, delta, epoch)
+        else:
+            grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
 
         delta.data = torch.clamp(
             delta + cfg.optim.alpha * torch.sign(grad),
@@ -462,11 +660,14 @@ def mifgsm_attack(
     delta = torch.zeros_like(image_org, requires_grad=True)
     momentum = torch.zeros_like(image_org, requires_grad=False)
     pbar = tqdm(range(cfg.optim.steps), desc=f"MI-FGSM [idx={img_index}]")
+    logger = getattr(ensemble_loss, "step_logger", None)
 
     for epoch in pbar:
         with torch.no_grad():
             ensemble_loss.set_ground_truth(target_crop(image_tgt))
 
+        if logger is not None:
+            logger.before_forward(epoch)
         adv_image = image_org + delta
         loss = get_similarity_loss(cfg, ensemble_extractor, ensemble_loss, adv_image, source_crop if cfg.model.use_source_crop else None)
 
@@ -477,7 +678,10 @@ def mifgsm_attack(
         }
         log_metrics(pbar, metrics, img_index, epoch)
 
-        grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
+        if logger is not None:
+            grad = logger.grad(loss, delta, epoch)
+        else:
+            grad = torch.autograd.grad(loss, delta, create_graph=False)[0]
 
         momentum = momentum * 0.9 + grad
         delta.data = torch.clamp(
@@ -504,6 +708,7 @@ def pgd_attack(
     delta = torch.zeros_like(image_org, requires_grad=True)
     optimizer = torch.optim.Adam([delta], lr=cfg.optim.alpha)
     pbar = tqdm(range(cfg.optim.steps), desc=f"PGD [idx={img_index}]")
+    logger = getattr(ensemble_loss, "step_logger", None)
 
     for epoch in pbar:
         with torch.no_grad():
@@ -524,6 +729,8 @@ def pgd_attack(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if logger is not None:
+            logger.write(epoch)
 
         delta.data = torch.clamp(
             delta,
@@ -594,6 +801,7 @@ def main(cfg: MainConfig):
     if seed is not None:
         seed = int(seed)
         torch.manual_seed(seed)
+        np.random.seed(seed)  # K-means picks its initial centres with np.random
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
@@ -662,6 +870,17 @@ def main(cfg: MainConfig):
     attack_fn = attack_fn_map.get(attack_type, pgd_attack)
     print(f"\nUsing attack method: {attack_type.upper()}")
 
+    logger = None
+    if cfg.log.lambda_log or cfg.log.diag_grad:
+        if cfg.log.diag_grad and attack_type not in ("fgsm", "mifgsm"):
+            raise ValueError("log.diag_grad supports attack=fgsm or mifgsm only")
+        logger = StepLogger(
+            ensemble_loss, cfg.model.backbone, os.path.join(output_dir, "logs", run_name),
+            diag_grad=cfg.log.diag_grad, diag_every=cfg.log.diag_every,
+        )
+        ensemble_loss.step_logger = logger
+    print(f"Loss mixing: mix={cfg.optim.mix}, enc_weight={cfg.optim.enc_weight}")
+
     # 7. RESUME: Scan this run's output directory for already-completed images
     save_base_dir = os.path.join(output_dir, "img", run_name)
     print(f"Run folder: {os.path.join(cfg.data.output, 'img', run_name)}")
@@ -719,6 +938,9 @@ def main(cfg: MainConfig):
             idx_str = f"{batch_indices[0]}-{batch_indices[-1]}" if len(batch_indices) > 1 else str(batch_indices[0])
             print(f"\n[Index {idx_str}] Generating Adversarial Sample(s) | Progress: {count_generated + count_skipped + len(batch_indices)}/{num_samples}")
             
+            if logger is not None:
+                logger.start_batch(batch_indices)
+
             # Run attack
             adv_images = attack_fn(
                 cfg=cfg,
@@ -748,6 +970,9 @@ def main(cfg: MainConfig):
             
             batch_indices = []
     
+    if logger is not None:
+        logger.close()
+
     print(f"\n{'='*60}")
     print(f"  Adversarial example generation complete!")
     print(f"  Total generated this run: {count_generated}")
