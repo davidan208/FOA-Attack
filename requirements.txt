@@ -1,0 +1,27 @@
+# SOTAttack + lambda logging, without Docker. Python 3.10 or 3.11.
+# Same versions as the Dockerfile (requirements_old.txt of the original server env).
+#
+# 1. torch first, matching the GPU:
+#    A6000 / A100 / H100 (driver >= 550):
+#      pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+#    RTX 5090 / other Blackwell (sm_120 needs CUDA 12.8, driver >= 570):
+#      pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+# 2. then:
+#      pip install -r requirements.txt
+numpy==1.26.4
+pillow==11.1.0
+transformers==4.49.0
+tokenizers==0.21.0
+safetensors==0.5.0
+huggingface-hub==0.28.1
+hydra-core==1.3.2
+omegaconf==2.3.0
+wandb==0.19.1
+PyYAML==6.0.2
+tqdm==4.67.1
+numba==0.60.0
+llvmlite==0.43.0
+matplotlib==3.10.0
+kmeans_pytorch @ git+https://github.com/subhadarship/kmeans_pytorch.git
+# Only for gemini_benchmark.py (optional black-box check):
+# google-genai==2.6.0
