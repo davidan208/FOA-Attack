@@ -206,7 +206,45 @@ def main():
     axes[1].legend()
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, "hist_one_minus_lambda.png"), dpi=200)
-    print(f"Wrote summary.md, summary.json, hist_one_minus_lambda.png to {out_dir}")
+    plt.close(fig)
+
+    # How the mixing evolves over the attack: per-step mean over images.
+    def per_step(rs, key):
+        acc = defaultdict(list)
+        for r in rs:
+            acc[r["t"]].append(r[key])
+        ts = sorted(acc)
+        return np.array(ts), np.array([np.mean(acc[t]) for t in ts])
+
+    panels = 3 if diag else 2
+    fig, axes = plt.subplots(1, panels, figsize=(5.2 * panels, 3.8))
+    for e in encs:
+        t, v = per_step([dict(r, one_minus=1.0 - r["lam"]) for r in groups[e]], "one_minus")
+        axes[0].plot(t, v, linewidth=1.2, label=e)
+    axes[0].set_xlabel("step t")
+    axes[0].set_ylabel("mean 1 - λ")
+    axes[0].set_title("Weight of the multi-view term")
+    axes[0].legend()
+    for e in encs:
+        t, v = per_step(groups[e], "w")
+        axes[1].plot(t, v, linewidth=1.2, label=e)
+    axes[1].axhline(1.0, color="gray", linewidth=0.8, linestyle="--")
+    axes[1].set_xlabel("step t")
+    axes[1].set_ylabel("mean w")
+    axes[1].set_title("Encoder weights")
+    axes[1].legend()
+    if diag:
+        for key, label in (("flip", "flip"), ("flip_nz", "flip on g_base≠0"), ("share", "share")):
+            rs = [r for r in diag if key in r]
+            if rs:
+                t, v = per_step(rs, key)
+                axes[2].plot(t, v, marker="o", markersize=2.5, linewidth=1.2, label=label)
+        axes[2].set_xlabel("step t")
+        axes[2].set_title("Effect on the update direction")
+        axes[2].legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "lambda_over_steps.png"), dpi=200)
+    print(f"Wrote summary.md, summary.json, hist_one_minus_lambda.png, lambda_over_steps.png to {out_dir}")
 
 
 if __name__ == "__main__":
