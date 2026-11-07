@@ -299,7 +299,7 @@ class SOTLossFunction(nn.Module):
         """Detached copies of the values this step used; one device sync for all of them."""
         n = len(loss_list)
         batch = len(base_terms[0])
-        scalars = list(loss_list) + list(mca_loss_list)
+        scalars = []
         for i in range(n):
             for g, l in base_terms[i]:
                 scalars += [g, l]
@@ -310,59 +310,58 @@ class SOTLossFunction(nn.Module):
                         scalars += [g, l]
         vals = torch.stack([t.detach().float().reshape(()) for t in scalars]).cpu().tolist()
 
-        s, m, pos = vals[:n], vals[n:2 * n], 2 * n
+        # Per image b and encoder i: s = global + 0.2 * local on the base view (the summands of
+        # loss_list[i]); views = the same score on each extra view; m = their mean.
+        pos = 0
         s_img = []
         for i in range(n):
             s_img.append([vals[pos + 2 * b] + 0.2 * vals[pos + 2 * b + 1] for b in range(batch)])
             pos += 2 * batch
-        if crop_terms is None:
-            m_img = s_img
-        else:
-            m_img = []
+        views = [[[] for _ in range(batch)] for _ in range(n)]
+        if crop_terms is not None:
             for i in range(n):
-                num_views = len(crop_terms[i])
-                acc = [0.0] * batch
-                for _ in range(num_views):
+                for _ in crop_terms[i]:
                     for b in range(batch):
-                        acc[b] += vals[pos + 2 * b] + 0.2 * vals[pos + 2 * b + 1]
+                        views[i][b].append(vals[pos + 2 * b] + 0.2 * vals[pos + 2 * b + 1])
                     pos += 2 * batch
-                m_img.append([a / num_views for a in acc])
+        m_img = [[sum(v) / len(v) if v else s_img[i][b] for b, v in enumerate(views[i])] for i in range(n)]
         return {
-            "s": s, "m": m, "r": [float(x) for x in ratios], "lam": [float(x) for x in lambdas],
-            "w": [float(x) for x in weights], "s_img": s_img, "m_img": m_img, "batch": batch,
+            "r": [float(x) for x in ratios], "lam": [float(x) for x in lambdas],
+            "w": [float(x) for x in weights], "s": s_img, "m": m_img, "views": views, "batch": batch,
         }
 
 
 class StepLogger:
     """
-    Read-only measurement of the mixing coefficients (and, optionally, of how much the
-    multi-view branch changes the update direction). It only reads values the attack already
+    Read-only measurement for TASK_lambda_logging.md. It only reads values the attack already
     computed: no extra random draws, no extra forward pass.
 
-    lambda.jsonl    : one row per image x step x encoder
-                      img, t, enc, s, m, r, lam, w, s_img, m_img, batch
-    grad_diag.jsonl : one row per image x diagnosed step:
-                      img, t, flip, share, zero_base, flip_nz
-                      zero_base = share of pixels whose base-only gradient is exactly 0 (outside
-                      the base crop); flip_nz = flip restricted to pixels where it is not 0
+    <log_dir>/lam_log_{img:03d}.jsonl, one file per image:
+      {"img", "t", "enc", "s", "m", "r", "lam", "w", "views"}   every step, enc 0/1/2 = backbone order
+      {"img", "t", "type": "grad", "flip", "share", "zero_base", "flip_nz"}   every diag_every steps
+    s, m, views are this image's scores. r, lam, w are exactly what the update used: the code
+    computes them from the batch-mean score, so with batch_size > 1 they are shared by the batch.
+    zero_base = fraction of pixels whose base-only gradient is exactly 0 (outside the base crop);
+    flip_nz = flip restricted to the other pixels.
     """
 
-    def __init__(self, ensemble_loss: "SOTLossFunction", enc_names: List[str], log_dir: str,
+    def __init__(self, ensemble_loss: "SOTLossFunction", log_dir: str,
                  diag_grad: bool = False, diag_every: int = 10):
         ensure_dir(log_dir)
         self.loss = ensemble_loss
-        self.enc_names = list(enc_names)
+        self.log_dir = log_dir
         self.diag_grad = diag_grad
         self.diag_every = max(1, int(diag_every))
         self.indices: List[int] = []
-        self.lambda_file = open(os.path.join(log_dir, "lambda.jsonl"), "a", encoding="utf-8")
-        self.diag_file = (open(os.path.join(log_dir, "grad_diag.jsonl"), "a", encoding="utf-8")
-                          if diag_grad else None)
+        self.files = []
         ensemble_loss.record = True
         print(f"  [StepLogger] writing to {log_dir} (diag_grad={diag_grad}, every {self.diag_every} steps)")
 
     def start_batch(self, indices: List[int]):
+        self._close_files()
         self.indices = list(indices)
+        self.files = [open(os.path.join(self.log_dir, f"lam_log_{img:03d}.jsonl"), "a", encoding="utf-8")
+                      for img in self.indices]
 
     def _diag_now(self, t: int) -> bool:
         return self.diag_grad and t % self.diag_every == 0
@@ -380,7 +379,7 @@ class StepLogger:
             j_base = sum(w * lam * s for s, lam, w in zip(graph["s"], graph["lam"], graph["w"]))
             g_base = torch.autograd.grad(j_base, delta)[0]
             with torch.no_grad():
-                flat_full = g_full.flatten(1)
+                flat_full = g_full.flatten(1)  # per image
                 flat_base = g_base.flatten(1)
                 differs = (torch.sign(flat_full) != torch.sign(flat_base)).float()
                 nonzero = (flat_base != 0).float()
@@ -401,31 +400,27 @@ class StepLogger:
             return
         if rec["batch"] != len(self.indices):
             raise RuntimeError(f"StepLogger: batch of {rec['batch']} but {len(self.indices)} indices")
-        lines = []
-        for b, img in enumerate(self.indices):
-            for i, enc in enumerate(self.enc_names):
-                lines.append(json.dumps({
-                    "img": img, "t": t, "enc": enc,
-                    "s": rec["s"][i], "m": rec["m"][i], "r": rec["r"][i],
-                    "lam": rec["lam"][i], "w": rec["w"][i],
-                    "s_img": rec["s_img"][i][b], "m_img": rec["m_img"][i][b],
-                    "batch": self.indices[0],
-                }))
-        self.lambda_file.write("\n".join(lines) + "\n")
-        self.lambda_file.flush()
-        if diag_rows is not None and self.diag_file is not None:
-            self.diag_file.write("\n".join(
-                json.dumps({"img": img, "t": t, "flip": fl, "share": sh, "zero_base": zb,
-                            "flip_nz": fnz, "batch": self.indices[0]})
-                for img, (fl, sh, zb, fnz) in zip(self.indices, diag_rows)
-            ) + "\n")
-            self.diag_file.flush()
+        for b, (img, f) in enumerate(zip(self.indices, self.files)):
+            lines = [json.dumps({
+                "img": img, "t": t, "enc": i,
+                "s": rec["s"][i][b], "m": rec["m"][i][b], "r": rec["r"][i],
+                "lam": rec["lam"][i], "w": rec["w"][i], "views": rec["views"][i][b],
+            }) for i in range(len(rec["r"]))]
+            if diag_rows is not None:
+                fl, sh, zb, fnz = diag_rows[b]
+                lines.append(json.dumps({"img": img, "t": t, "type": "grad", "flip": fl, "share": sh,
+                                         "zero_base": zb, "flip_nz": fnz}))
+            f.write("\n".join(lines) + "\n")
+            f.flush()
         self.loss.last_record = None
 
+    def _close_files(self):
+        for f in self.files:
+            f.close()
+        self.files = []
+
     def close(self):
-        self.lambda_file.close()
-        if self.diag_file is not None:
-            self.diag_file.close()
+        self._close_files()
 
 # =====================================================================
 
@@ -875,7 +870,7 @@ def main(cfg: MainConfig):
         if cfg.log.diag_grad and attack_type not in ("fgsm", "mifgsm"):
             raise ValueError("log.diag_grad supports attack=fgsm or mifgsm only")
         logger = StepLogger(
-            ensemble_loss, cfg.model.backbone, os.path.join(output_dir, "logs", run_name),
+            ensemble_loss, os.path.join(output_dir, "logs"),
             diag_grad=cfg.log.diag_grad, diag_every=cfg.log.diag_every,
         )
         ensemble_loss.step_logger = logger

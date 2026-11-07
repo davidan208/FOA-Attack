@@ -61,7 +61,7 @@ summary() {  # summary <out subdir> <steps>
     local out=$1 steps=$2
     docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e MPLCONFIGDIR=/tmp \
         -v "$ROOT_HOST":"$WS/$ROOT" "$IMAGE" \
-        bash -c 'set -e; d=$(ls -d "$1"/logs/*/ | head -1); python analyze_lambda.py "$d" --steps "$2" --out "$1/analysis"' \
+        bash -c 'python summarize.py "$1/logs" --steps "$2" --out "$1/analysis"' \
         _ "$ROOT/$out" "$steps"
 }
 
