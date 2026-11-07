@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Lambda logging study of SOTAttack (original algorithm, measurement only) + Gemini benchmark.
 # Settings of the main run: FGSM (iterative sign), M = 5, T = 300, eps 16/255, alpha 1/255,
-# crops [0.5, 0.9], K = 10, pairs 0-99, batch 16, unseeded.
+# crops [0.5, 0.9], K = 10, batch 16, unseeded. The study runs on the first NUM pairs (default 20).
 #
 #   bash docker_lambda.sh check     # pair #0 alone, log + gradient diagnostic, prints the summary
 #   bash docker_lambda.sh verify    # pair #0 with a fixed seed: plain / logged / plain -> images must match
-#   bash docker_lambda.sh full      # pairs 0-99 with logging (background container 'foa-lambda')
+#   bash docker_lambda.sh full      # pairs 0..NUM-1 with logging (background container 'foa-lambda')
 #   bash docker_lambda.sh analyze   # tables + histogram from the full run's logs
 #   GEMINI_API_KEY=... GEMINI_MODEL=<model id> bash docker_lambda.sh bench <name> [<adv image dir>]
-#                                   # default dir: the full run's images
+#                                   # optional black-box check, not needed for the lambda study
 #
-# Env: GPU (default 7), ROOT (default lambda_study), DIAG_EVERY (default 10; 0 = no gradient
+# Env: GPU (default 7), NUM (default 20), ROOT (default lambda_study), DIAG_EVERY (default 10; 0 = no gradient
 # diagnostic), VERIFY_STEPS (default 300), GEMINI_THINKING (default low), HF_CACHE.
 # Everything is written under ./$ROOT on the host.
 
@@ -20,6 +20,7 @@ cd "$(dirname "$0")"
 CMD=${1:-}
 IMAGE=${IMAGE:-foa-attack}
 GPU=${GPU:-7}
+NUM=${NUM:-20}
 ROOT=${ROOT:-lambda_study}
 DIAG_EVERY=${DIAG_EVERY:-10}
 VERIFY_STEPS=${VERIFY_STEPS:-300}
@@ -107,8 +108,8 @@ full)
     fi
     run_gpu -d --name foa-lambda "$IMAGE" bash -c '"$@" >> "'"$ROOT"'/full/run.log" 2>&1' _ \
         python SOTAttack.py "${ATTACK_ARGS[@]}" "data.output=$ROOT/full" "hydra.run.dir=$ROOT/full/hydra" \
-        data.num_samples=100 data.batch_size=16 seed=null "${LOG_ARGS[@]}" > /dev/null
-    echo "Started 'foa-lambda' on GPU $GPU. Log: $ROOT_HOST/full/run.log"
+        "data.num_samples=$NUM" data.batch_size=16 seed=null "${LOG_ARGS[@]}" > /dev/null
+    echo "Started 'foa-lambda' on GPU $GPU for pairs 0-$((NUM - 1)). Log: $ROOT_HOST/full/run.log"
     echo "Images so far: find $ROOT/full/img -name '*.png' | wc -l   (re-run 'full' after a stop to resume)"
     ;;
 analyze)
@@ -129,7 +130,7 @@ bench)
         -e GEMINI_API_KEY -e GEMINI_MODEL -e GEMINI_THINKING \
         -v "$ROOT_HOST":"$WS/$ROOT" -v "$ADV_HOST":/adv:ro "$IMAGE" \
         python gemini_benchmark.py --adv-dir /adv --out "$ROOT/bench/$NAME" \
-            --target-cache "$ROOT/bench/target_desc.jsonl" --num 100 "${@:4}"
+            --target-cache "$ROOT/bench/target_desc.jsonl" --num "$NUM" "${@:4}"
     echo "Benchmark: $ROOT_HOST/bench/$NAME (results.jsonl, summary.json)"
     ;;
 *)
