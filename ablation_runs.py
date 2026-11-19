@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the adversarial images of the ablation study: every variant x seed, 100 pairs.
 
-    python ablation_runs.py                 # all 13 variants x seeds 0,1,2 on GPU 0
+    python ablation_runs.py                 # all 11 variants x seeds 0,1,2 on GPU 0
     python ablation_runs.py --gpus 0,1,2,3  # four GPUs: each takes the next run when it is free
     python ablation_runs.py --only goc,foa_T300 --seeds 0
     python ablation_runs.py --list          # show the queue and exit
@@ -32,7 +32,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 SOT = "SOTAttack.py"
 FOA = "generate_adversarial_samples_foa_attack.py"
-MATTACK = "generate_adversarial_samples_mattack.py"
 
 # name -> (script, extra Hydra overrides, description). Order = priority.
 VARIANTS = {
@@ -44,11 +43,9 @@ VARIANTS = {
     "uniw":          (SOT, ["optim.enc_weight=uniform"], "adaptive lambda, uniform w"),
     "fixlam05_uniw": (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.enc_weight=uniform"],
                       "lambda = 0.5, uniform w"),
-    # Group 2: baselines at equal steps (T = 300) and equal compute (T = 1050)
+    # Group 2: FOA-Attack at equal steps (T = 300) and equal compute (T = 1050)
     "foa_T300":      (FOA, [], "FOA-Attack, T = 300"),
     "foa_T1050":     (FOA, ["optim.steps=1050"], "FOA-Attack, T = 1050"),
-    "mattack_T300":  (MATTACK, [], "M-Attack, T = 300"),
-    "mattack_T1050": (MATTACK, ["optim.steps=1050"], "M-Attack, T = 1050"),
     # Group 3: number of extra views (M = 5 is 'goc')
     "M1":            (SOT, ["optim.num_crops=1"], "SOTAttack, M = 1"),
     "M3":            (SOT, ["optim.num_crops=3"], "SOTAttack, M = 3"),
@@ -196,7 +193,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="ablation_out", help="output root")
     ap.add_argument("--seeds", default="0,1,2")
-    ap.add_argument("--only", default=None, help="comma-separated variants (default: the 13 of the study)")
+    ap.add_argument("--only", default=None, help="comma-separated variants (default: the 11 of the study)")
     ap.add_argument("--num", type=int, default=100, help="image pairs per run")
     ap.add_argument("--gpus", default="0", help="comma-separated GPU indices; runs are shared out dynamically")
     ap.add_argument("--device", default=None, help="torch device override, e.g. cpu (default: the --gpus cards)")

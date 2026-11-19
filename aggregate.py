@@ -158,10 +158,9 @@ def main():
         ("Adaptive λ × encoder re-weighting", ["Variant", "Seeds"] + metric_heads, [
             row("goc", "adaptive λ, adaptive w"), row("uniw", "adaptive λ, uniform w"),
             row("fixlam05", "λ = 0.5, adaptive w"), row("fixlam05_uniw", "λ = 0.5, uniform w")]),
-        ("Compute-matched baselines", ["Method", "Seeds", "Passes/step", "Steps", "Total passes"] + metric_heads, [
+        ("Compute-matched FOA-Attack", ["Method", "Seeds", "Passes/step", "Steps", "Total passes"] + metric_heads, [
             row(v, label, cost(v)) for v, label in [
-                ("mattack_T300", "M-Attack"), ("mattack_T1050", "M-Attack"), ("foa_T300", "FOA-Attack"),
-                ("foa_T1050", "FOA-Attack"), ("M1", "SOTAttack M = 1"), ("goc", "SOTAttack M = 5")]]),
+                ("foa_T300", "FOA-Attack"), ("foa_T1050", "FOA-Attack"), ("M1", "SOTAttack M = 1"), ("goc", "SOTAttack M = 5")]]),
         ("Number of extra views M", ["Variant", "Seeds", "Passes/step"] + metric_heads, [
             row(v, label, (passes_per_step(v),)) for v, label in [
                 ("M1", "M = 1"), ("M3", "M = 3"), ("goc", "M = 5"), ("M7", "M = 7")]]),
@@ -176,7 +175,7 @@ def main():
         md += [f"## {title}", "", md_table(headers, rows), ""]
         tex.append(tex_table(title, headers, rows))
     md.append("Passes/step counts encoder-view evaluations as in the thesis (N(M+2) vs 2N, N = 3); "
-              "the FOA-Attack and M-Attack scripts also run one logging-only pass on the full image.")
+              "the FOA-Attack script also runs one logging-only pass on the full image.")
     md += ["", "Blocked = adversarial images (summed over seeds) whose description Gemini refused; "
            "they are left out of the metrics, see blocked.csv."]
     if blocked_targets:

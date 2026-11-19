@@ -2,11 +2,11 @@
 # Ablation study end to end, no Docker: environment -> adversarial images -> benchmark -> tables.
 #
 #   bash run_all.sh                     # everything on GPU 0
-#   GPUS=0,1,2,3 bash run_all.sh        # four GPUs share the 39 runs
+#   GPUS=0,1,2,3 bash run_all.sh        # four GPUs share the 33 runs
 #   STAGE=gen bash run_all.sh           # images only;  STAGE=eval: benchmark + tables only
 #
 # Needs a .env file here with:  GEMINI_API_KEY=...   DEEPSEEK_API_KEY=...
-# Env: GPUS (0), SHARD (0/1, several machines only), SEEDS (0,1,2), ONLY (variants, default all 13), STAGE (all|gen|eval),
+# Env: GPUS (0), SHARD (0/1, several machines only), SEEDS (0,1,2), ONLY (variants, default all 11), STAGE (all|gen|eval),
 #      TORCH_CUDA (cu128 for RTX 50xx, cu124 for A6000/A100/H100), OUT (ablation_out).
 # Everything resumes: re-run the same command after an interruption.
 
