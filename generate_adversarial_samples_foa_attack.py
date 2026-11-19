@@ -30,7 +30,7 @@ from surrogates import (
     EnsembleFeatureLoss_OT_foa_attack
 )
 
-from utils import hash_training_config, setup_wandb, ensure_dir
+from utils import hash_training_config, setup_wandb, ensure_dir, report_step
 
 # Mapping from backbone names to model classes
 BACKBONE_MAP: Dict[str, type] = {
@@ -308,6 +308,7 @@ def fgsm_attack(
 
     # Main optimization loop
     for epoch in pbar:
+        report_step(epoch, cfg.optim.steps)
 
         with torch.no_grad():
             ensemble_loss.set_ground_truth(target_crop(image_tgt))

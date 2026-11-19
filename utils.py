@@ -188,3 +188,17 @@ def get_output_paths(cfg: MainConfig, config_hash: Optional[str] = None) -> Dict
         return {'output_dir': img_legacy, 'desc_output_dir': desc_legacy}
 
     return {'output_dir': img_new, 'desc_output_dir': desc_new}
+
+
+def report_step(step: int, total: int) -> None:
+    """Tell the ablation runner which step the current image is at (file named by $ABL_PROGRESS).
+
+    Does nothing when the variable is unset, i.e. when the attack script is run by hand.
+    """
+    path = os.environ.get("ABL_PROGRESS")
+    if path and (step % 5 == 0 or step + 1 == total):
+        try:
+            with open(path, "w") as f:
+                f.write(f"{step + 1}/{total}")
+        except OSError:
+            pass

@@ -24,7 +24,7 @@ from surrogates import (
     EnsembleFeatureExtractor_ot,
 )
 
-from utils import get_run_name, setup_wandb
+from utils import get_run_name, setup_wandb, report_step
 
 # Backbone mapping matching standard naming conventions
 BACKBONE_MAP = {
@@ -614,6 +614,7 @@ def fgsm_attack(
     logger = getattr(ensemble_loss, "step_logger", None)
 
     for epoch in pbar:
+        report_step(epoch, cfg.optim.steps)
         with torch.no_grad():
             ensemble_loss.set_ground_truth(target_crop(image_tgt))
 

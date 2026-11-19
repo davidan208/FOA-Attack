@@ -6,8 +6,8 @@
     python ablation_runs.py --only goc,foa_T300 --seeds 0
     python ablation_runs.py --list          # show the queue and exit
 
-The screen shows progress bars only: runs done, and the images of the run on each GPU. Everything the
-attack scripts print goes to <out>/work/<run>/run.log.
+The screen shows progress bars only: runs done, and for each GPU its run, the images done and the step of
+the current image. Everything the attack scripts print goes to <out>/work/<run>/run.log.
 
 Output, one flat folder per finished run:
     <out>/images/<variant>_s<seed>/<index>.png
@@ -105,6 +105,24 @@ def run_attack(cmd, work_dir, env, bar=None):
     """Run one attack subprocess, logging to work_dir/run.log. Returns the exit code."""
     os.makedirs(work_dir, exist_ok=True)
     img_dir = os.path.join(work_dir, "img")
+    progress = os.path.join(work_dir, "progress")
+    env = dict(env, ABL_PROGRESS=progress)
+    if os.path.exists(progress):
+        os.remove(progress)  # left over from an interrupted run
+
+    def show():
+        if bar is None:
+            return
+        bar.n = min(count_pngs(img_dir), bar.total)
+        try:
+            with open(progress) as f:
+                step = f.read().strip()
+        except OSError:
+            step = ""
+        if step:
+            bar.set_postfix_str(f"step {step}", refresh=False)
+        bar.refresh()
+
     with open(os.path.join(work_dir, "run.log"), "ab") as log:
         log.write(f"\n===== {time.strftime('%F %T')} | {' '.join(cmd)}\n".encode())
         log.flush()
@@ -114,12 +132,8 @@ def run_attack(cmd, work_dir, env, bar=None):
                 proc.terminate()
                 proc.wait()
                 break
-            if bar is not None:
-                bar.n = min(count_pngs(img_dir), bar.total)
-                bar.refresh()
-    if bar is not None:
-        bar.n = min(count_pngs(img_dir), bar.total)
-        bar.refresh()
+            show()
+    show()
     return proc.returncode
 
 
@@ -145,6 +159,7 @@ def run_pool(jobs, slots, device, main_bar, image_bars):
                 break
             if bar is not None:
                 bar.reset(total=job["num"])
+                bar.set_postfix_str("loading models", refresh=False)
                 bar.set_description_str(f"{tag} {job['name']:<18}")
             cmd = build_cmd(job["variant"], job["seed"], job["work"], device, job["num"], job["extra"])
             code = run_attack(cmd, job["work"], env, bar)
@@ -251,7 +266,7 @@ def main():
                      extra=[*args.overrides, "data.num_samples=1", "optim.steps=2"])
                 for v in dict.fromkeys(v for v, _ in todo)]
         with tqdm(total=len(jobs), desc="smoke", unit="variant", position=0) as bar:
-            failed = run_pool(jobs, slots, device, bar, image_bars=False)
+            failed = run_pool(jobs, slots, device, bar, image_bars=True)
         if failed:
             print("Smoke test failed, nothing was started: " + ", ".join(f[0] for f in failed))
             return 1
