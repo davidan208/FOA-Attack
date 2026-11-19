@@ -43,11 +43,11 @@ class SOTLossFunction(nn.Module):
     Modify this class to implement novel loss formulations (e.g., custom transport plans,
     metric learning losses, or new global/local alignment measures).
     """
-    MIX_MODES = ("adaptive", "base_only", "multi_only", "uniform")
+    MIX_MODES = ("adaptive", "fixed", "base_only", "multi_only", "uniform")
     ENC_WEIGHT_MODES = ("adaptive", "uniform")
 
     def __init__(self, extractors: List[nn.Module], cluster_number: int = 10,
-                 mix: str = "adaptive", enc_weight: str = "adaptive"):
+                 mix: str = "adaptive", enc_weight: str = "adaptive", fixed_lambda: float = 0.5):
         super(SOTLossFunction, self).__init__()
         if mix not in self.MIX_MODES:
             raise ValueError(f"optim.mix must be one of {self.MIX_MODES}, got '{mix}'")
@@ -56,6 +56,7 @@ class SOTLossFunction(nn.Module):
         self.extractors = nn.ModuleList(extractors)
         self.cluster_number = cluster_number
         self.mix = mix
+        self.fixed_lambda = float(fixed_lambda)
         self.enc_weight = enc_weight
         self.ground_truth_global = []
         self.ground_truth_local = []
@@ -260,6 +261,8 @@ class SOTLossFunction(nn.Module):
         for i in range(len(self.extractors)):
             if self.mix == "adaptive":
                 lambda_i = min(ratios[i], 1.0)
+            elif self.mix == "fixed":
+                lambda_i = self.fixed_lambda
             elif self.mix == "base_only":
                 lambda_i = 1.0
             elif self.mix == "multi_only":
@@ -544,7 +547,7 @@ def get_surrogate_models(cfg: MainConfig, cluster_number: int) -> Tuple[torch.nn
 
     ensemble_loss = SOTLossFunction(
         models, cluster_number=cluster_number,
-        mix=cfg.optim.mix, enc_weight=cfg.optim.enc_weight,
+        mix=cfg.optim.mix, enc_weight=cfg.optim.enc_weight, fixed_lambda=cfg.optim.fixed_lambda,
     )
     
     return ensemble_extractor, models, ensemble_loss
@@ -874,7 +877,9 @@ def main(cfg: MainConfig):
             diag_grad=cfg.log.diag_grad, diag_every=cfg.log.diag_every,
         )
         ensemble_loss.step_logger = logger
-    print(f"Loss mixing: mix={cfg.optim.mix}, enc_weight={cfg.optim.enc_weight}")
+    print(f"Loss mixing: mix={cfg.optim.mix}"
+          + (f" (lambda={cfg.optim.fixed_lambda})" if cfg.optim.mix == "fixed" else "")
+          + f", enc_weight={cfg.optim.enc_weight}, num_crops={cfg.optim.num_crops}")
 
     # 7. RESUME: Scan this run's output directory for already-completed images
     save_base_dir = os.path.join(output_dir, "img", run_name)

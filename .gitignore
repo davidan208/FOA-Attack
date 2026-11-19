@@ -31,3 +31,9 @@ wandb/
 # API keys
 api_keys.yaml
 
+
+# Secrets and experiment outputs
+.env
+ablation_out/
+lambda_study/
+ablation_results.tgz

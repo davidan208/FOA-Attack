@@ -1,5 +1,5 @@
-# SOTAttack + lambda logging, without Docker. Python 3.10 or 3.11.
-# Easiest: bash setup_vast.sh (isolated .venv, no clash with packages already on the machine).
+# Attacks + evaluation of the ablation study. Python 3.10 or 3.11.
+# Easiest: bash run_all.sh (calls setup_vast.sh: isolated .venv, no clash with preinstalled packages).
 # Same versions as the Dockerfile (requirements_old.txt of the original server env).
 #
 # 1. torch first, matching the GPU:
@@ -24,5 +24,6 @@ numba==0.60.0
 llvmlite==0.43.0
 matplotlib==3.10.0
 kmeans_pytorch @ git+https://github.com/subhadarship/kmeans_pytorch.git
-# Only for gemini_benchmark.py (optional black-box check):
-# google-genai==2.6.0
+# evaluate.py: Gemini victim (google-genai) and DeepSeek judge (plain HTTP)
+google-genai==2.6.0
+requests>=2.31

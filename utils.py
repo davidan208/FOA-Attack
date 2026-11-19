@@ -94,14 +94,16 @@ def hash_training_config(cfg: MainConfig) -> str:
         },
         "attack": cfg.attack,
     }
-    # Ablation flags are hashed only when off, so the original runs keep their folder names.
-    for flag in ("use_base", "adaptive"):
-        if not cfg.optim.get(flag, True):
-            train_config["optim"][flag] = False
+    # Ablation settings are hashed only when they differ from the original method, so the
+    # original runs keep their folder names.
     for key in ("mix", "enc_weight"):
         value = cfg.optim.get(key, "adaptive")
         if value != "adaptive":
             train_config["optim"][key] = value
+    if cfg.optim.get("mix", "adaptive") == "fixed":
+        train_config["optim"]["fixed_lambda"] = float(cfg.optim.fixed_lambda)
+    if int(cfg.optim.get("num_crops", 5)) != 5:
+        train_config["optim"]["num_crops"] = int(cfg.optim.num_crops)
 
     # Convert to JSON string with sorted keys
     json_str = json.dumps(train_config, sort_keys=True)

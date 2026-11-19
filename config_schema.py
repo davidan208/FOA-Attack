@@ -41,12 +41,11 @@ class OptimConfig:
     steps: int = 300
     use_mca: bool = True
     num_crops: int = 5
-    # Read only by SOTAttack_ablation.py; SOTAttack.py always behaves as base + adaptive.
-    use_base: bool = True
-    adaptive: bool = True
     # SOTAttack.py: lambda in q_i = lambda_i*s_i + (1-lambda_i)*m_i.
-    #   adaptive = min(r_i, 1) (original), base_only = 1, multi_only = 0, uniform = 1/(M+1)
+    #   adaptive = min(r_i, 1) (original), fixed = fixed_lambda, base_only = 1, multi_only = 0,
+    #   uniform = 1/(M+1)
     mix: str = "adaptive"
+    fixed_lambda: float = 0.5
     # SOTAttack.py: encoder weights w_i. adaptive = N*softmax(r) (original), uniform = 1
     enc_weight: str = "adaptive"
 
