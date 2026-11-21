@@ -60,6 +60,12 @@ VARIANTS = {
 # Not in the default queue; run with --only.
 EXTRA_VARIANTS = {
     "baseonly":      (SOT, ["optim.mix=base_only"], "lambda = 1 inside SOTAttack"),
+    # Same total compute as FOA-Attack T = 1050 and as M = 5, T = 300 (6300 encoder-view passes per image),
+    # spent on more steps instead of more views: 3 * (M + 2) * T = 6300.
+    "fix05_M1_T700": (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=1", "optim.steps=700"],
+                      "lambda = 0.5, M = 1, T = 700"),
+    "fix05_M3_T420": (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=3", "optim.steps=420"],
+                      "lambda = 0.5, M = 3, T = 420"),
 }
 ALL_VARIANTS = {**VARIANTS, **EXTRA_VARIANTS}
 
