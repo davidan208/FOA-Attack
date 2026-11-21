@@ -85,7 +85,7 @@ class MainConfig:
     blackbox: BlackboxConfig = field(default_factory=BlackboxConfig)
     log: LogConfig = field(default_factory=LogConfig)
     attack: str = "fgsm"  # can be [fgsm, mifgsm, pgd]
-    seed: Optional[int] = 2026  # null leaves PyTorch unseeded (original behaviour)
+    seed: Optional[int] = 0  # null leaves PyTorch unseeded (behaviour of the first runs)
 
 
 # register config for different setting

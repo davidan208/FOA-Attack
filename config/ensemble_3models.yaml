@@ -37,6 +37,6 @@ blackbox:
 
 attack: 'mifgsm' # [fgsm, mifgsm, pgd]
 
-# Experiment seed. null = leave PyTorch unseeded (the original default run).
+# Experiment seed (default 0; the ablation uses 0, 1, 2). null = leave PyTorch unseeded, as in the first runs.
 # Each (attack, seed) pair is written to its own folder: output/img/<attack>_seed<seed>_<hash>
-seed: null
+seed: 0
