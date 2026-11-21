@@ -3,10 +3,12 @@
 #
 #   bash run_all.sh                     # everything on GPU 0
 #   GPUS=0,1,2,3 bash run_all.sh        # four GPUs share the 42 runs
+#   ONLY=foa_T1050:2,fix05_M1:0+1 STAGE=gen GPUS=0,1,2,3 bash run_all.sh   # chosen variants, each with its seeds
 #   STAGE=gen bash run_all.sh           # images only;  STAGE=eval: benchmark + tables only
 #
 # Needs a .env file here with:  GEMINI_API_KEY=...   DEEPSEEK_API_KEY=...
 # Env: GPUS (0), SHARD (0/1, several machines only), SEEDS (0,1,2), ONLY (variants, default all 14), STAGE (all|gen|eval),
+#      SMOKE (0; 1 runs every variant for one image x two steps before the real runs),
 #      TORCH_CUDA (cu128 for RTX 50xx, cu124 for A6000/A100/H100), OUT (ablation_out).
 # Everything resumes: re-run the same command after an interruption.
 
@@ -18,6 +20,7 @@ GPUS=${GPUS:-0}
 SHARD=${SHARD:-0/1}
 SEEDS=${SEEDS:-0,1,2}
 OUT=${OUT:-ablation_out}
+SMOKE=${SMOKE:-0}
 
 if [ ! -x .venv/bin/python ]; then
     bash setup_vast.sh
@@ -36,7 +39,9 @@ if [ "$STAGE" != gen ]; then
 fi
 
 if [ "$STAGE" = all ] || [ "$STAGE" = gen ]; then
-    python ablation_runs.py --out "$OUT" --gpus "$GPUS" --shard "$SHARD" --seeds "$SEEDS" ${ONLY:+--only "$ONLY"}
+    SMOKE_FLAG=--skip-smoke
+    [ "$SMOKE" = 1 ] && SMOKE_FLAG=
+    python ablation_runs.py --out "$OUT" --gpus "$GPUS" --shard "$SHARD" --seeds "$SEEDS" ${ONLY:+--only "$ONLY"} $SMOKE_FLAG
 fi
 
 if [ "$STAGE" = all ] || [ "$STAGE" = eval ]; then
