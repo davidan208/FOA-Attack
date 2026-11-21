@@ -48,6 +48,9 @@ class OptimConfig:
     fixed_lambda: float = 0.5
     # SOTAttack.py: encoder weights w_i. adaptive = N*softmax(r) (original), uniform = 1
     enc_weight: str = "adaptive"
+    # SOTAttack.py: run the M + 1 source views of a step through each encoder as one batch (same loss,
+    # fewer sequential passes). False = one pass per view, as in every run reported so far.
+    batch_views: bool = False
 
 
 @dataclass

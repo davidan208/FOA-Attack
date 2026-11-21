@@ -177,6 +177,11 @@ def main():
         ("Number of extra views M (λ = 0.5, reference: M = 5)", ["Variant", "Seeds", "Passes/step"] + metric_heads_for("fixlam05"), [
             row(v, label, (passes_per_step(v),), ref="fixlam05") for v, label in [
                 ("fix05_M1", "M = 1"), ("fix05_M3", "M = 3"), ("fixlam05", "M = 5"), ("fix05_M7", "M = 7")]]),
+        # Last on purpose: a new table here leaves the bootstrap draws of the tables above unchanged.
+        ("Views batched through the encoders (λ = 0.5, M = 5; reference: one pass per view)",
+         ["Implementation", "Seeds"] + metric_heads_for("fixlam05"), [
+            row(v, label, ref="fixlam05") for v, label in [
+                ("fixlam05", "one pass per view"), ("fix05_bv", "views batched")] if "fix05_bv" in per_run]),
     ]
 
     md = [f"# Ablation summary ({args.num} pairs, judge: DeepSeek)", ""]

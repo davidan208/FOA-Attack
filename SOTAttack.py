@@ -561,6 +561,30 @@ def log_metrics(pbar, metrics: Dict[str, float], img_index: int, epoch: Optional
     pbar.set_postfix(pbar_metrics)
 
 
+def _batched_views_loss(ensemble_extractor, ensemble_loss, image, base_image, source_crop, num_crops) -> torch.Tensor:
+    """optim.batch_views: the M + 1 source views of one step go through each encoder as one batch.
+
+    Same loss as the default path, which runs one encoder pass per view. The views are drawn in the same
+    order (base view first), and the K-Means calls run in the same order (view by view, encoder by encoder),
+    so both paths consume the random generators identically; only the encoder passes are merged.
+    """
+    views = [base_image] + [source_crop(image) for _ in range(num_crops)]
+    batch = image.shape[0]
+    stacked = torch.cat(views, dim=0)                       # [(M + 1) * B, 3, H, W]
+    tokens = [model.global_local_features(stacked) for model in ensemble_extractor.extractors]
+
+    per_view = []
+    for j in range(num_crops + 1):
+        rows = slice(j * batch, (j + 1) * batch)
+        feats, feats_local = {}, {}
+        for i, (global_tok, local_tok) in enumerate(tokens):
+            feats[i] = global_tok[rows]
+            feats_local[i] = torch.stack(
+                [ensemble_extractor.get_cluster_center(tok, image.device) for tok in local_tok[rows]], dim=0)
+        per_view.append((feats, feats_local))
+    return ensemble_loss(per_view[0][0], per_view[0][1], crop_features=per_view[1:], use_mca=True)
+
+
 def get_similarity_loss(
     cfg: MainConfig,
     ensemble_extractor: torch.nn.Module,
@@ -576,6 +600,10 @@ def get_similarity_loss(
     else:
         base_image = image
         
+    num_crops = cfg.optim.num_crops if (cfg.optim.use_mca and source_crop is not None) else 0
+    if cfg.optim.batch_views and num_crops > 0 and hasattr(ensemble_extractor, "extractors"):
+        return _batched_views_loss(ensemble_extractor, ensemble_loss, image, base_image, source_crop, num_crops)
+
     outputs = ensemble_extractor(base_image)
     
     crop_features = []

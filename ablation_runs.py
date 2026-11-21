@@ -66,6 +66,9 @@ EXTRA_VARIANTS = {
                       "lambda = 0.5, M = 1, T = 700"),
     "fix05_M3_T420": (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=3", "optim.steps=420"],
                       "lambda = 0.5, M = 3, T = 420"),
+    # 'fixlam05' with the views of a step batched through the encoders: same method, measures wall-clock time.
+    "fix05_bv":      (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.batch_views=true"],
+                      "lambda = 0.5, views batched"),
 }
 ALL_VARIANTS = {**VARIANTS, **EXTRA_VARIANTS}
 
