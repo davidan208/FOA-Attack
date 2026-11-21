@@ -47,6 +47,7 @@ fi
 if [ "$STAGE" = all ] || [ "$STAGE" = eval ]; then
     python evaluate.py --out "$OUT"
     python aggregate.py --out "$OUT"
+    python timing.py --out "$OUT" > /dev/null || true   # eval/timing.csv: seconds per image of every run
     # Everything needed to re-check the results by hand: all images, descriptions, scores, tables.
     tar czf ablation_results.tgz -C "$OUT" images eval
     echo "Download: $(pwd)/ablation_results.tgz ($(du -h ablation_results.tgz | cut -f1))"
