@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generate the adversarial images of the ablation study: every variant x seed, 100 pairs.
 
-    python ablation_runs.py                 # all 11 variants x seeds 0,1,2 on GPU 0
+    python ablation_runs.py                 # all 14 variants x seeds 0,1,2 on GPU 0
     python ablation_runs.py --gpus 0,1,2,3  # four GPUs: each takes the next run when it is free
     python ablation_runs.py --only goc,foa_T300 --seeds 0
+    python ablation_runs.py --only foa_T1050:2,fix05_M3:0+1   # a variant with its own seeds
     python ablation_runs.py --list          # show the queue and exit
 
 The screen shows progress bars only: runs done, and for each GPU its run, the images done and the step of
@@ -50,6 +51,11 @@ VARIANTS = {
     "M1":            (SOT, ["optim.num_crops=1"], "SOTAttack, M = 1"),
     "M3":            (SOT, ["optim.num_crops=3"], "SOTAttack, M = 3"),
     "M7":            (SOT, ["optim.num_crops=7"], "SOTAttack, M = 7"),
+    # Group 4: number of extra views with lambda fixed at 0.5 (M = 5 is 'fixlam05'); here the extra views
+    # carry real weight, unlike under adaptive lambda where 1 - lambda is ~0.015.
+    "fix05_M1":      (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=1"], "lambda = 0.5, M = 1"),
+    "fix05_M3":      (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=3"], "lambda = 0.5, M = 3"),
+    "fix05_M7":      (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=7"], "lambda = 0.5, M = 7"),
 }
 # Not in the default queue; run with --only.
 EXTRA_VARIANTS = {
@@ -208,7 +214,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="ablation_out", help="output root")
     ap.add_argument("--seeds", default="0,1,2")
-    ap.add_argument("--only", default=None, help="comma-separated variants (default: the 11 of the study)")
+    ap.add_argument("--only", default=None,
+                    help="comma-separated variants, each optionally with its own seeds: name or name:0+1 "
+                         "(default: all variants x --seeds)")
     ap.add_argument("--num", type=int, default=100, help="image pairs per run")
     ap.add_argument("--gpus", default="0", help="comma-separated GPU indices; runs are shared out dynamically")
     ap.add_argument("--device", default=None, help="torch device override, e.g. cpu (default: the --gpus cards)")
@@ -219,17 +227,26 @@ def main():
     ap.add_argument("overrides", nargs="*", help="extra Hydra overrides for every run (testing), e.g. optim.steps=2")
     args = ap.parse_args()
 
-    names = [v.strip() for v in args.only.split(",")] if args.only else list(VARIANTS)
+    seeds = [int(s) for s in args.seeds.split(",")]
+    wanted = {}   # variant -> its seeds
+    for item in ([x.strip() for x in args.only.split(",")] if args.only else list(VARIANTS)):
+        name, _, own = item.partition(":")
+        wanted[name] = [int(s) for s in own.split("+")] if own else seeds
+    names = list(wanted)
     unknown = [v for v in names if v not in ALL_VARIANTS]
     if unknown:
         ap.error(f"unknown variant(s) {unknown}; choose from {list(ALL_VARIANTS)}")
-    seeds = [int(s) for s in args.seeds.split(",")]
     shard_i, shard_n = (int(x) for x in args.shard.split("/"))
     if not 0 <= shard_i < shard_n:
         ap.error("--shard i/n needs 0 <= i < n")
 
-    # Seed outermost: every variant gets its first seed before any gets its second.
-    queue = [(v, s) for s in seeds for v in names][shard_i::shard_n]
+    # Default: seed outermost, so every variant gets its first seed before any gets its second.
+    # With --only the order is the one given (list the longest run first so it starts at once).
+    if args.only:
+        queue = [(v, s) for v in names for s in wanted[v]]
+    else:
+        queue = [(v, s) for s in seeds for v in names]
+    queue = queue[shard_i::shard_n]
     out = os.path.abspath(os.path.join(HERE, args.out)) if not os.path.isabs(args.out) else args.out
     images_root, work_root = os.path.join(out, "images"), os.path.join(out, "work")
     device = args.device or "cuda:0"   # each child sees only its own card, as cuda:0

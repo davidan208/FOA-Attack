@@ -133,22 +133,26 @@ def main():
                               for i, r in rows.items() if r.get("blocked") == "target"})
     rng = np.random.default_rng(0)
 
-    def row(variant, label, extra=()):
+    def row(variant, label, extra=(), ref=None):
+        ref = ref or args.ref
         if variant not in per_run:
             return None
         seeds = per_run[variant]
         cells = [label, len(seeds), *extra, n_blocked[variant]]
         cells += [mean_std([m[k] for m in seeds.values()], 3 if k == "avgsim" else 1) for k, _ in METRICS]
-        if args.ref in per_image and variant != args.ref:
-            d, lo, hi = paired_delta(per_image[variant]["kmr"], per_image[args.ref]["kmr"], 100, rng)
+        if ref in per_image and variant != ref:
+            d, lo, hi = paired_delta(per_image[variant]["kmr"], per_image[ref]["kmr"], 100, rng)
             cells.append(f"{d:+.1f} [{lo:+.1f}, {hi:+.1f}]")
-            d, lo, hi = paired_delta(per_image[variant]["score"], per_image[args.ref]["score"], 1, rng)
+            d, lo, hi = paired_delta(per_image[variant]["score"], per_image[ref]["score"], 1, rng)
             cells.append(f"{d:+.3f} [{lo:+.3f}, {hi:+.3f}]")
         else:
             cells += ["–", "–"]
         return cells
 
-    metric_heads = ["Blocked"] + [h for _, h in METRICS] + [f"ΔKMR vs {args.ref} [95% CI]", "ΔAvgSim [95% CI]"]
+    def metric_heads_for(ref):
+        return ["Blocked"] + [h for _, h in METRICS] + [f"ΔKMR vs {ref} [95% CI]", "ΔAvgSim [95% CI]"]
+
+    metric_heads = metric_heads_for(args.ref)
     cost = lambda v: (passes_per_step(v), steps_of(v), passes_per_step(v) * steps_of(v))
     tables = [
         ("Fixed vs adaptive λ (adaptive encoder weights, M = 5)", ["Variant", "Seeds"] + metric_heads, [
@@ -161,9 +165,17 @@ def main():
         ("Compute-matched FOA-Attack", ["Method", "Seeds", "Passes/step", "Steps", "Total passes"] + metric_heads, [
             row(v, label, cost(v)) for v, label in [
                 ("foa_T300", "FOA-Attack"), ("foa_T1050", "FOA-Attack"), ("M1", "SOTAttack M = 1"), ("goc", "SOTAttack M = 5")]]),
-        ("Number of extra views M", ["Variant", "Seeds", "Passes/step"] + metric_heads, [
+        ("Number of extra views M (adaptive λ)", ["Variant", "Seeds", "Passes/step"] + metric_heads, [
             row(v, label, (passes_per_step(v),)) for v, label in [
                 ("M1", "M = 1"), ("M3", "M = 3"), ("goc", "M = 5"), ("M7", "M = 7")]]),
+        ("Fixed λ = 0.5 vs FOA-Attack at equal compute (reference: FOA-Attack T = 1050)",
+         ["Method", "Seeds", "Total passes"] + metric_heads_for("foa_T1050"), [
+            row(v, label, (passes_per_step(v) * steps_of(v),), ref="foa_T1050") for v, label in [
+                ("foa_T1050", "FOA-Attack T = 1050"), ("fixlam05", "λ = 0.5, M = 5"),
+                ("fix05_M1", "λ = 0.5, M = 1"), ("goc", "adaptive λ, M = 5")]]),
+        ("Number of extra views M (λ = 0.5, reference: M = 5)", ["Variant", "Seeds", "Passes/step"] + metric_heads_for("fixlam05"), [
+            row(v, label, (passes_per_step(v),), ref="fixlam05") for v, label in [
+                ("fix05_M1", "M = 1"), ("fix05_M3", "M = 3"), ("fixlam05", "M = 5"), ("fix05_M7", "M = 7")]]),
     ]
 
     md = [f"# Ablation summary ({args.num} pairs, judge: DeepSeek)", ""]
