@@ -177,7 +177,8 @@ def main():
                 ("fix05_M1", "λ = 0.5, M = 1"), ("goc", "adaptive λ, M = 5")]]),
         ("Number of extra views M (λ = 0.5, reference: M = 5)", ["Variant", "Seeds", "Passes/step"] + metric_heads_for("fixlam05"), [
             row(v, label, (passes_per_step(v),), ref="fixlam05") for v, label in [
-                ("fix05_M1", "M = 1"), ("fix05_M3", "M = 3"), ("fixlam05", "M = 5"), ("fix05_M7", "M = 7")]]),
+                ("fix05_M1", "M = 1"), ("fix05_M3", "M = 3"), ("fixlam05", "M = 5"), ("fix05_M7", "M = 7"),
+                ("fix05_M7_bv", "M = 7 (views batched)")]]),
         # Last on purpose: a new table here leaves the bootstrap draws of the tables above unchanged.
         ("Views batched through the encoders (λ = 0.5, M = 5; reference: one pass per view)",
          ["Implementation", "Seeds"] + metric_heads_for("fixlam05"), [

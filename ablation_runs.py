@@ -72,6 +72,9 @@ EXTRA_VARIANTS = {
     # 'fixlam05' with the views of a step batched through the encoders: same method, measures wall-clock time.
     "fix05_bv":      (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.batch_views=true"],
                       "lambda = 0.5, views batched"),
+    # M = 7 at T = 300 for the M sweep at lambda 0.5, run with batched views to fit the time left.
+    "fix05_M7_bv":   (SOT, ["optim.mix=fixed", "optim.fixed_lambda=0.5", "optim.num_crops=7", "optim.batch_views=true"],
+                      "lambda = 0.5, M = 7, views batched"),
 }
 ALL_VARIANTS = {**VARIANTS, **EXTRA_VARIANTS}
 
