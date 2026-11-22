@@ -172,6 +172,7 @@ def main():
          ["Method", "Seeds", "Total passes"] + metric_heads_for("foa_T1050"), [
             row(v, label, (passes_per_step(v) * steps_of(v),), ref="foa_T1050") for v, label in [
                 ("foa_T1050", "FOA-Attack T = 1050"), ("fixlam05", "λ = 0.5, M = 5"),
+                ("fix05_bv", "λ = 0.5, M = 5, views batched"),
                 ("fix05_M3_T420", "λ = 0.5, M = 3, T = 420"), ("fix05_M1_T700", "λ = 0.5, M = 1, T = 700"),
                 ("fix05_M7_T233", "λ = 0.5, M = 7, T = 233"),
                 ("fix05_M1", "λ = 0.5, M = 1"), ("goc", "adaptive λ, M = 5")]]),
