@@ -42,6 +42,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--victim", default="FRT-gemma-4-31B-it")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--limit", type=int, default=0, help="only the first N pairs (0 = all)")
     args = ap.parse_args()
     load_env(os.path.join(HERE, ".env"))
     judge = DeepSeekJudge()
@@ -51,6 +52,8 @@ def main():
     for method in METHODS:
         with open(os.path.join(args.inputs, f"{args.victim}_similarity_{method}.json"), encoding="utf-8") as f:
             pairs = {k: v for k, v in json.load(f).items() if isinstance(v, dict) and "adversarial_description" in v}
+        if args.limit:
+            pairs = {k: v for k, v in pairs.items() if int(k) < args.limit}
         path = os.path.join(args.out, f"{args.victim}_deepseek_{method}.json")
         done = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
         todo = [k for k in pairs if k not in done]
@@ -78,6 +81,13 @@ def main():
         for name, table in (("Gemma 4 31B", gemma), ("DeepSeek", deepseek)):
             m = metrics(table[method])
             lines.append(f"| {method} | {name} | {m['asr3']:.1f} | {m['asr5']:.1f} | {m['asr7']:.1f} | {m['avgsim']:.3f} |")
+    lines.append("")
+    for method in METHODS:
+        g, d = gemma[method], deepseek[method]
+        mg, md = sum(g) / len(g), sum(d) / len(d)
+        cov = sum((x - mg) * (y - md) for x, y in zip(g, d))
+        r = cov / math.sqrt(sum((x - mg) ** 2 for x in g) * sum((y - md) ** 2 for y in d))
+        lines.append(f"{method}: Pearson r between the two judges over pairs = {r:.3f}")
     lines.append("")
     for name, table in (("Gemma 4 31B", gemma), ("DeepSeek", deepseek)):
         for sot in ("SOTAttack_fgsm", "SOTAttack_fgsm_seed2026"):
